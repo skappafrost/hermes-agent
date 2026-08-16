@@ -132,7 +132,14 @@ class ObsidianVaultProvider(MemoryProvider):
     # -- Lifecycle -----------------------------------------------------
 
     def initialize(self, session_id: str, **kwargs) -> None:
-        """Initialize the vault index."""
+        """Initialize the vault index.
+
+        This method returns immediately.  If a persistent cache exists it is
+        loaded and a quick incremental scan is performed synchronously.  If no
+        cache exists (or it is empty/invalid), a full scan is started in a
+        background daemon thread so that Hermes agent initialization is not
+        blocked.
+        """
         self._hermes_home = kwargs.get("hermes_home", "")
         vault_path = _resolve_vault_path(self._config, self._hermes_home)
         if not vault_path:
@@ -148,13 +155,17 @@ class ObsidianVaultProvider(MemoryProvider):
         # Honor the `tags_as_categories` config on the shared index so that
         # notes tagged #project-alpha are retrievable via `category:project-alpha`.
         self._index.tags_as_categories = _config_bool(self._config.get("tags_as_categories", True))
-        count = self._index.scan(vault_path, max_notes=max_notes)
+        # Background scan by default: never block the agent build thread on a
+        # full vault re-index.  If a usable cache is present, the incremental
+        # portion still runs synchronously but is expected to be fast.
+        count = self._index.scan(vault_path, max_notes=max_notes, background=True)
         self._vault_path = vault_path
         self._initialized = True
         logger.info(
-            "obsidian_vault: indexed %d notes from %s",
-            count,
+            "obsidian_vault: initialized from %s (immediate notes: %d; background scan state: %s)",
             vault_path,
+            count,
+            self._index.scan_state,
         )
 
     def system_prompt_block(self) -> str:

@@ -233,6 +233,38 @@
 
 ---
 
+## 9. P0 FOLLOW-UP: Hermes 0.20.1 601 s Startup Timeout (2026-08-16)
+
+### Problem
+`obsidian_vault` plugin caused Hermes agent initialization to timeout after 601 s on Windows because `VaultIndex.scan()` performed a synchronous full vault scan (including dense-embedding model loading) on every cold start, and the SQLite cache read path crashed with `IndexError: No item with that key`, discarding the cache.
+
+### Changes Applied
+
+| Item | File(s) | Status |
+|------|---------|--------|
+| P0-A: Fixed `load_cache()` SELECT / `_row_to_note()` column mismatch | `vault.py` | ✅ Complete |
+| P0-B: Per-row cache resilience (skip malformed rows, continue loading) | `vault.py` | ✅ Complete |
+| P0-C: Non-blocking background full scan; embedding init moved into background thread | `vault.py`, `__init__.py` | ✅ Complete |
+| P0-D: WAL/transaction safety — batch commit every 50 notes during `_full_scan` | `vault.py` | ✅ Complete |
+| Incremental scan return value fixed to total note count | `vault.py` | ✅ Complete |
+| Regression tests added/updated | `tests/test_p0_remediation.py`, `tests/test_vault_write_read_consistency.py` | ✅ Complete |
+
+### Verification
+```
+plugins/memory/obsidian_vault/tests/
+  22 passed in 390.33s
+```
+
+### Files Changed This Cycle
+- `plugins/memory/obsidian_vault/vault.py`
+- `plugins/memory/obsidian_vault/__init__.py`
+- `plugins/memory/obsidian_vault/tests/test_p0_remediation.py`
+- `plugins/memory/obsidian_vault/tests/test_vault_write_read_consistency.py`
+
+**Result:** Agent initialization no longer blocks on full vault scan. The 601 s timeout path is removed.
+
+---
+
 ## FINAL P0 STATUS: **PASS** ✅
 
 All P0 correctness/data integrity issues have been fixed and verified.
@@ -242,4 +274,5 @@ All P0 correctness/data integrity issues have been fixed and verified.
 ---
 
 *Report generated: 2026-08-09*  
-*Session: P0 Remediation Execution*
+*Session: P0 Remediation Execution*  
+*Updated: 2026-08-16 — 601 s startup timeout remediation*

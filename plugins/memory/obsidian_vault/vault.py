@@ -498,6 +498,12 @@ class VaultIndex:
         self._embedding_config: Dict[str, Any] = {}
         self._hybrid_searcher = None
 
+        # Background scan lifecycle state.  All access must hold ``self._lock``.
+        # States: idle, loading, building, partial, ready, error
+        self._scan_state = "idle"
+        self._scan_error: Optional[str] = None
+        self._scan_thread: Optional[threading.Thread] = None
+
     # ------------------------------------------------------------------
     # Database Management
     # ------------------------------------------------------------------
@@ -666,7 +672,12 @@ class VaultIndex:
             logger.warning("Failed to commit/checkpoint vault index DB: %s", e)
 
     def load_cache(self, vault_path: Path) -> bool:
-        """Load index from persistent storage if valid."""
+        """Load index from persistent storage if valid.
+
+        Returns True if the on-disk cache is structurally usable.  A cache may
+        be usable but empty; callers that need a non-empty index should check
+        ``self._notes`` afterwards.
+        """
         db_path = self._get_db_path(vault_path)
         cache_file = self._get_cache_file(vault_path)
 
@@ -678,30 +689,46 @@ class VaultIndex:
                     conn = self._db
                     conn.row_factory = sqlite3.Row
 
+                    # Basic schema validation: ensure the columns we need exist.
+                    cols = {r[1] for r in conn.execute("PRAGMA table_info(notes)").fetchall()}
+                    required_cols = {"slug", "title", "body", "frontmatter", "tags", "category",
+                                     "last_modified", "size_bytes", "embedding", "links", "backlinks", "path"}
+                    if not required_cols.issubset(cols):
+                        logger.warning("SQLite cache schema mismatch: missing columns %s", required_cols - cols)
+                        return False
+
                     # Verify vault path matches
                     row = conn.execute("SELECT COUNT(*) as c FROM notes LIMIT 1").fetchone()
-                    if row:
+                    if row is not None:
                         with self._lock:
                             self._vault_path = vault_path
                             self._use_fts5 = True
 
-                            # Load notes from DB
+                            # Load notes from DB.  Select every column _row_to_note needs.
                             rows = conn.execute("""
                                 SELECT slug, title, body, frontmatter, tags, category,
-                                       last_modified, size_bytes, links, backlinks
+                                       last_modified, size_bytes, embedding, links, backlinks, path
                                 FROM notes
                             """).fetchall()
 
+                            loaded_count = 0
+                            skipped_count = 0
                             for row in rows:
-                                note = self._row_to_note(row, vault_path)
-                                self._notes[note.slug] = note
-                                self._index_note(note, skip_db=True)
-                                # Store relative path for mtime tracking
                                 try:
-                                    rel_path = str(note.path.relative_to(vault_path))
-                                except (ValueError, OSError):
-                                    rel_path = note.slug + ".md"
-                                self._file_mtimes[rel_path] = note.last_modified
+                                    note = self._row_to_note(row, vault_path)
+                                    self._notes[note.slug] = note
+                                    self._index_note(note, skip_db=True)
+                                    # Store relative path for mtime tracking
+                                    try:
+                                        rel_path = str(note.path.relative_to(vault_path))
+                                    except (ValueError, OSError):
+                                        rel_path = note.slug + ".md"
+                                    self._file_mtimes[rel_path] = note.last_modified
+                                    loaded_count += 1
+                                except Exception as e:
+                                    skipped_count += 1
+                                    slug = row["slug"] if "slug" in row.keys() else "<unknown>"
+                                    logger.warning("Failed to load cached note %s: %s", slug, e)
 
                             # Rebuild search index stats
                             self._rebuild_search_stats()
@@ -716,7 +743,8 @@ class VaultIndex:
                             else:
                                 self._last_scan = datetime.now().timestamp()
                                 self._dirty = False
-                                logger.info("Loaded vault index from SQLite cache (%d notes)", len(self._notes))
+                                logger.info("Loaded vault index from SQLite cache (%d notes, %s skipped)",
+                                            loaded_count, skipped_count)
                                 return True
 
                             # File changes detected, but DB is loaded - do incremental
@@ -815,11 +843,18 @@ class VaultIndex:
     # Scanning (Incremental)
     # ------------------------------------------------------------------
 
-    def scan(self, vault_path: Path, max_notes: int = 10000) -> int:
+    def scan(self, vault_path: Path, max_notes: int = 10000, *,
+             background: bool = True) -> int:
         """Scan the vault directory and index all .md files.
 
         Uses incremental indexing: only re-parses files that have changed.
         Loads from cache if available and valid.
+
+        If ``background`` is True (the default), a cache that is empty or only
+        partially loaded will not trigger a synchronous full scan. Instead, any
+        required full scan is scheduled on a daemon thread and this method
+        returns 0 immediately. The provider/tool layer must remain usable while
+        the background builder runs.
         """
         vault_path = vault_path.resolve()
         if not vault_path.is_dir():
@@ -828,15 +863,59 @@ class VaultIndex:
 
         self._max_notes = max_notes
 
-        # Initialize embedding pipeline if dense embeddings available
-        if DENSE_EMBEDDINGS_AVAILABLE and self._embedding_pipeline is None:
-            self._init_embedding_pipeline(vault_path)
-
         # Try to load from cache first
         cache_loaded = self.load_cache(vault_path)
 
+        with self._lock:
+            self._vault_path = vault_path
+
         if cache_loaded:
+            # Cache structurally valid; do a quick synchronous incremental scan
+            # for any files changed since the cache was written.  Embedding
+            # pipeline is needed only if dense search is requested; initialize
+            # it lazily inside _incremental_scan/_full_scan to avoid blocking.
+            if DENSE_EMBEDDINGS_AVAILABLE and self._embedding_pipeline is None:
+                self._init_embedding_pipeline(vault_path)
             return self._incremental_scan(vault_path, max_notes)
+
+        # No usable cache.  Avoid blocking the caller with a full scan.
+        if background:
+            with self._lock:
+                if self._scan_state in ("building", "loading"):
+                    logger.info("Background vault scan already in progress for %s", vault_path)
+                    return 0
+                self._scan_state = "loading"
+                self._scan_error = None
+
+            def _run_scan():
+                try:
+                    # Initialize embedding pipeline lazily inside the background
+                    # thread so model loading does not block agent init.
+                    if DENSE_EMBEDDINGS_AVAILABLE and self._embedding_pipeline is None:
+                        self._init_embedding_pipeline(vault_path)
+                    with self._lock:
+                        self._scan_state = "building"
+                    count = self._full_scan(vault_path, max_notes)
+                    with self._lock:
+                        self._scan_state = "ready"
+                    logger.info("Background vault scan finished for %s: %d notes", vault_path, count)
+                    return count
+                except Exception as e:
+                    logger.exception("Background vault scan failed for %s: %s", vault_path, e)
+                    with self._lock:
+                        self._scan_state = "error"
+                        self._scan_error = str(e)
+                    raise
+
+            thread = threading.Thread(target=_run_scan, daemon=True, name=f"obsidian-vault-scan-{vault_path.name}")
+            self._scan_thread = thread
+            thread.start()
+            logger.info("Started background vault scan for %s", vault_path)
+            return 0
+
+        # Synchronous fallback (used only by tests or explicit callers).
+        if DENSE_EMBEDDINGS_AVAILABLE and self._embedding_pipeline is None:
+            self._init_embedding_pipeline(vault_path)
         return self._full_scan(vault_path, max_notes)
 
     def _init_embedding_pipeline(self, vault_path: Path):
@@ -902,6 +981,7 @@ class VaultIndex:
                     conn.commit()
 
             count = 0
+            commit_batch = 50
             for md_file in sorted(vault_path.rglob("*.md")):
                 if count >= max_notes:
                     break
@@ -919,6 +999,9 @@ class VaultIndex:
                         self._file_mtimes[rel_path] = note.last_modified
                         self._insert_note_to_db(note, md_file, vault_path)
                         count += 1
+                        if count % commit_batch == 0:
+                            self._commit_db()
+                            logger.debug("Committed batch of %d notes during full scan", commit_batch)
                 except Exception as e:
                     logger.debug("Failed to index note %s: %s", md_file, e)
 
@@ -1053,7 +1136,7 @@ class VaultIndex:
                 conn.commit()
 
             self._last_scan = datetime.now().timestamp()
-            return count
+            return len(self._notes)
 
     def _incremental_scan_no_db(self, vault_path: Path, max_notes: int) -> int:
         """Incremental scan without SQLite DB (fallback)."""
@@ -1955,6 +2038,17 @@ class VaultIndex:
     def is_empty(self) -> bool:
         with self._lock:
             return len(self._notes) == 0
+
+    @property
+    def scan_state(self) -> str:
+        """Current background scan state (idle/loading/building/partial/ready/error)."""
+        with self._lock:
+            return self._scan_state
+
+    @property
+    def scan_error(self) -> Optional[str]:
+        with self._lock:
+            return self._scan_error
 
     def flush(self) -> bool:
         """Force save cache to disk."""

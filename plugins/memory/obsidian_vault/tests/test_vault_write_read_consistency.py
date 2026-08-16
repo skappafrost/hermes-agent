@@ -49,7 +49,7 @@ def _count_search(idx: VaultIndex, query: str) -> int:
 
 def test_create_note_visible_same_instance(vault_dir):
     idx = VaultIndex()
-    idx.scan(vault_dir)
+    idx.scan(vault_dir, background=False)
     note = idx.create_note(title="Memory Responsibility Split", body="hello", tags=["x"])
     assert note is not None
     # Read paths on the SAME instance must see it immediately.
@@ -60,13 +60,13 @@ def test_create_note_visible_same_instance(vault_dir):
 def test_create_note_visible_second_instance(vault_dir):
     """The live failure mode: a second VaultIndex connection must see the write."""
     idx = VaultIndex()
-    idx.scan(vault_dir)
+    idx.scan(vault_dir, background=False)
     note = idx.create_note(title="Memory Responsibility Split", body="hello", tags=["x"])
     assert note is not None
 
     # Simulate the separate connection used by a second provider instance.
     idx2 = VaultIndex()
-    idx2.scan(vault_dir)
+    idx2.scan(vault_dir, background=False)
     assert idx2.get_note(note.slug) is not None, "fresh instance must see note too"
     assert _count_search(idx2, "Memory Responsibility Split") >= 1, "fresh instance search must see note"
 
@@ -74,7 +74,7 @@ def test_create_note_visible_second_instance(vault_dir):
 def test_create_note_visible_via_shared_index(vault_dir):
     """All callers for the same vault path share ONE index instance."""
     s1 = get_shared_index(vault_dir)
-    s1.scan(vault_dir)
+    s1.scan(vault_dir, background=False)
     note = s1.create_note(title="Shared Index Note", body="content", tags=["y"])
     assert note is not None
 
@@ -87,7 +87,7 @@ def test_create_note_visible_via_shared_index(vault_dir):
 def test_stats_agrees_with_get_note_after_create(vault_dir):
     """vault_stats total_notes must equal the count of get_note-able notes."""
     idx = VaultIndex()
-    before = idx.scan(vault_dir)
+    before = idx.scan(vault_dir, background=False)
     note = idx.create_note(title="Agreement Note", body="body", tags=["z"])
     assert note is not None
 
@@ -103,7 +103,7 @@ def test_stats_agrees_with_get_note_after_create(vault_dir):
 
 def test_append_to_note_visible_second_instance(vault_dir):
     idx = VaultIndex()
-    idx.scan(vault_dir)
+    idx.scan(vault_dir, background=False)
     note = idx.create_note(title="Append Target", body="first", tags=["a"])
     assert note is not None
 
@@ -111,7 +111,7 @@ def test_append_to_note_visible_second_instance(vault_dir):
     assert ok is True
 
     idx2 = VaultIndex()
-    idx2.scan(vault_dir)
+    idx2.scan(vault_dir, background=False)
     reread = idx2.get_note(note.slug)
     assert reread is not None
     assert "appended content here" in reread.body, "appended text must persist across connection"
@@ -120,7 +120,7 @@ def test_append_to_note_visible_second_instance(vault_dir):
 
 def test_update_note_visible_second_instance(vault_dir):
     idx = VaultIndex()
-    idx.scan(vault_dir)
+    idx.scan(vault_dir, background=False)
     note = idx.create_note(title="Update Target", body="zzzoldunique", tags=["u"])
     assert note is not None
 
@@ -128,7 +128,7 @@ def test_update_note_visible_second_instance(vault_dir):
     assert updated is not None
 
     idx2 = VaultIndex()
-    idx2.scan(vault_dir)
+    idx2.scan(vault_dir, background=False)
     reread = idx2.get_note(note.slug)
     assert reread is not None
     assert "zzznewdistinct" in reread.body, "updated body must persist across connection"
@@ -147,7 +147,7 @@ def test_scan_counts_all_md_files(vault_dir):
             f"---\ntitle: Note {i}\ntags: [scan]\n---\nBody of note {i}.\n", encoding="utf-8"
         )
     idx = VaultIndex()
-    count = idx.scan(vault_dir)
+    count = idx.scan(vault_dir, background=False)
     assert count == 3
     assert _count_search(idx, "Body of note") == 3
 
@@ -173,7 +173,7 @@ def test_nested_note_path_persists_across_cache_reload(vault_dir):
 
     # First index: scan + persist to DB.
     idx = VaultIndex()
-    idx.scan(vault_dir)
+    idx.scan(vault_dir, background=False)
     note = idx.get_note("real-note")
     assert note is not None
     assert note.path == nested / "real-note.md", "first-scan path must be real"
@@ -182,7 +182,7 @@ def test_nested_note_path_persists_across_cache_reload(vault_dir):
 
     # Fresh index that loads from cache (the A1 failure path).
     idx2 = VaultIndex()
-    loaded = idx2.scan(vault_dir)
+    loaded = idx2.scan(vault_dir, background=False)
     assert loaded >= 1
 
     reloaded = idx2.get_note("real-note")
@@ -202,7 +202,7 @@ def test_reload_path_works_with_relative_to_after_create(vault_dir):
     nested = vault_dir / "deep" / "folder"
     nested.mkdir(parents=True, exist_ok=True)
     idx = VaultIndex()
-    idx.scan(vault_dir)
+    idx.scan(vault_dir, background=False)
     note = idx.create_note(
         title="Deep Note",
         body="deep content",
@@ -215,7 +215,7 @@ def test_reload_path_works_with_relative_to_after_create(vault_dir):
 
     idx._commit_db()
     idx2 = VaultIndex()
-    idx2.scan(vault_dir)
+    idx2.scan(vault_dir, background=False)
     reloaded = idx2.get_note("deep-note")
     assert reloaded is not None
     assert reloaded.path == expected, f"reloaded nested path wrong: {reloaded.path!r}"
@@ -236,7 +236,7 @@ def test_list_embedding_does_not_crash_insert(vault_dir):
     AttributeError: 'list' object has no attribute 'tolist'.
     """
     idx = VaultIndex()
-    idx.scan(vault_dir)
+    idx.scan(vault_dir, background=False)
     # Simulate the fallback code path (no dense pipeline -> list embeddings).
     idx._embedding_pipeline = None
 
@@ -253,7 +253,7 @@ def test_embedding_survives_cache_reload(vault_dir):
     import numpy as np
 
     idx = VaultIndex()
-    idx.scan(vault_dir)
+    idx.scan(vault_dir, background=False)
     # Ensure the dense pipeline path is exercised (produces numpy ndarray dim 384).
     assert idx._embedding_pipeline is not None, "dense pipeline should be active in this env"
     note = idx.create_note(title="Reload Emb", body="reload embedding content unique", tags=["a4"])
@@ -265,7 +265,7 @@ def test_embedding_survives_cache_reload(vault_dir):
     idx.close()
 
     idx2 = VaultIndex()
-    idx2.scan(vault_dir)
+    idx2.scan(vault_dir, background=False)
     reloaded = idx2.get_note("reload-emb")
     assert reloaded is not None
     rel = reloaded.embedding
@@ -282,14 +282,14 @@ def test_related_notes_after_reload(vault_dir):
     import numpy as np
 
     idx = VaultIndex()
-    idx.scan(vault_dir)
+    idx.scan(vault_dir, background=False)
     idx.create_note(title="Anchor", body="machine learning model training inference", tags=["a4"])
     idx.create_note(title="Related", body="neural network training and inference pipeline", tags=["a4"])
     idx._commit_db()
     idx.close()
 
     idx2 = VaultIndex()
-    idx2.scan(vault_dir)
+    idx2.scan(vault_dir, background=False)
     results = idx2.related_notes(slug="anchor", limit=5, min_similarity=0.0)
     # At least the 'related' note should appear with a real (non-zero) similarity.
     assert results, "related_notes must return results after reload"
