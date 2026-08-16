@@ -871,11 +871,9 @@ class VaultIndex:
 
         if cache_loaded:
             # Cache structurally valid; do a quick synchronous incremental scan
-            # for any files changed since the cache was written.  Embedding
-            # pipeline is needed only if dense search is requested; initialize
-            # it lazily inside _incremental_scan/_full_scan to avoid blocking.
-            if DENSE_EMBEDDINGS_AVAILABLE and self._embedding_pipeline is None:
-                self._init_embedding_pipeline(vault_path)
+            # for any files changed since the cache was written.  The dense
+            # embedding pipeline is initialized lazily on first semantic search
+            # so that agent init is never blocked by model loading.
             return self._incremental_scan(vault_path, max_notes)
 
         # No usable cache.  Avoid blocking the caller with a full scan.
@@ -1043,7 +1041,15 @@ class VaultIndex:
                     mtime = stat.st_mtime
                     old_mtime = self._file_mtimes.get(rel_path)
 
-                    # Check if file is stable (not being written to)
+                    # Fast path: file unchanged since the cache was written.
+                    # Skip it WITHOUT the (sleeping) stability check so a warm
+                    # cache scan stays fast and never blocks agent init.
+                    if old_mtime is not None and mtime <= old_mtime:
+                        processed += 1
+                        continue
+
+                    # New or changed file: verify it is stable (not being
+                    # written to) before parsing.
                     if not self._is_file_stable(md_file):
                         logger.debug("File not stable, skipping: %s", md_file)
                         processed += 1
@@ -1057,7 +1063,7 @@ class VaultIndex:
                                 conn.execute("DELETE FROM notes WHERE slug = ?", (note.slug,))
                             self._notes[note.slug] = note
                             self._index_note(note)
-                            self._file_mtimes[note.slug] = mtime
+                            self._file_mtimes[rel_path] = mtime
                             self._insert_note_to_db(note, md_file, vault_path)
                             count += 1
                             self._dirty = True
@@ -1091,7 +1097,7 @@ class VaultIndex:
                                         conn.execute("DELETE FROM notes WHERE slug = ?", (note.slug,))
                                     self._notes[note.slug] = note
                                     self._index_note(note)
-                                    self._file_mtimes[note.slug] = mtime
+                                    self._file_mtimes[rel_path] = mtime
                                     self._insert_note_to_db(note, md_file, vault_path)
                                     count += 1
                                     self._dirty = True

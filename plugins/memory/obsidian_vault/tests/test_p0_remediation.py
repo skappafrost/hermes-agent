@@ -374,6 +374,85 @@ def test_p0_provider_initialize_does_not_block():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_p0_warm_cache_scan_does_not_sleep():
+    """Regression: warm-cache incremental scan must not call the sleeping
+    stability check on unchanged files.
+
+    Before the fix, ``_incremental_scan`` called ``_is_file_stable`` (which
+    sleeps 0.5s) for EVERY file, so a 1644-note vault blocked agent init for
+    ~822s.  With a warm cache and no changed files the scan must finish in
+    well under N*0.5s.
+    """
+    tmp = Path(tempfile.mkdtemp())
+    try:
+        vault_path = tmp / "vault"
+        vault_path.mkdir()
+        cache_dir = tmp / "cache"
+        cache_dir.mkdir()
+
+        n_notes = 30
+        for i in range(n_notes):
+            (vault_path / f"note-{i}.md").write_text(f"# Note {i}\ncontent {i}", encoding="utf-8")
+
+        from plugins.memory.obsidian_vault.vault import VaultIndex
+
+        # First scan: builds the SQLite cache synchronously.
+        idx1 = VaultIndex(cache_dir=cache_dir)
+        idx1.scan(vault_path, max_notes=10000, background=False)
+        assert len(idx1._notes) == n_notes
+
+        # Second scan with a fresh index: cache hit -> incremental scan over
+        # unchanged files.  Must NOT sleep 0.5s per file.
+        idx2 = VaultIndex(cache_dir=cache_dir)
+        start = time.time()
+        idx2.scan(vault_path, max_notes=10000, background=False)
+        elapsed = time.time() - start
+
+        assert len(idx2._notes) == n_notes, f"Expected {n_notes} notes from cache, got {len(idx2._notes)}"
+        # Old behaviour would take n_notes * 0.5s = 15s.  Allow a generous but
+        # still far-below-that budget.
+        assert elapsed < 5.0, f"Warm-cache scan blocked for {elapsed:.1f}s (expected < 5s)"
+
+        print(f"✅ P0 warm-cache scan non-blocking: PASS ({elapsed:.2f}s for {n_notes} notes)")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_p0_changed_file_still_reindexed():
+    """The warm-cache fast path must still pick up genuinely changed files."""
+    tmp = Path(tempfile.mkdtemp())
+    try:
+        vault_path = tmp / "vault"
+        vault_path.mkdir()
+        cache_dir = tmp / "cache"
+        cache_dir.mkdir()
+
+        f = vault_path / "mutable.md"
+        f.write_text("# Mutable\noriginal content", encoding="utf-8")
+
+        from plugins.memory.obsidian_vault.vault import VaultIndex
+
+        idx1 = VaultIndex(cache_dir=cache_dir)
+        idx1.scan(vault_path, max_notes=10000, background=False)
+
+        # Modify the file and bump its mtime forward so the change is detected.
+        time.sleep(0.05)
+        f.write_text("# Mutable\nupdated content", encoding="utf-8")
+        new_mtime = f.stat().st_mtime + 2.0
+        os.utime(f, (new_mtime, new_mtime))
+
+        idx2 = VaultIndex(cache_dir=cache_dir)
+        idx2.scan(vault_path, max_notes=10000, background=False)
+
+        note = idx2._notes.get("mutable")
+        assert note is not None, "Changed note should still be indexed"
+        assert "updated content" in note.body, "Changed file must be re-parsed"
+
+        print("✅ P0 changed-file reindex: PASS")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 # Hook to build an index with a specific cache_dir for the tests above.
 # The provider normally uses the vault's own cache dir; expose a helper.
 import sqlite3  # noqa: E402
@@ -398,6 +477,8 @@ def run_all_p0_tests():
     test_p0_load_cache_missing_column_does_not_fail_entire_cache()
     test_p0_empty_cache_starts_background_scan()
     test_p0_provider_initialize_does_not_block()
+    test_p0_warm_cache_scan_does_not_sleep()
+    test_p0_changed_file_still_reindexed()
 
     print("=" * 60)
     print("ALL P0 TESTS PASSED!")

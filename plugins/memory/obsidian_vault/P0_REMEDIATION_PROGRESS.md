@@ -249,11 +249,50 @@
 | Incremental scan return value fixed to total note count | `vault.py` | ✅ Complete |
 | Regression tests added/updated | `tests/test_p0_remediation.py`, `tests/test_vault_write_read_consistency.py` | ✅ Complete |
 
-### Verification
+### Root Cause of the 601 s Timeout (final, confirmed)
+
+Two independent blockers compounded on the **warm-cache** path (the path taken
+when a valid SQLite cache already exists, i.e. every normal restart):
+
+1. **Synchronous embedding-pipeline init on cache hit.** `scan()` called
+   `_init_embedding_pipeline()` (loads the sentence-transformers model) before
+   `_incremental_scan()`. Removed — the pipeline is now initialized lazily on
+   first semantic search / inside the background full-scan thread only.
+
+2. **`_is_file_stable()` slept 0.5 s for EVERY file, even unchanged ones.**
+   `_incremental_scan()` ran the sleeping stability check before the mtime
+   comparison, so a 1644-note vault burned ~822 s of pure `time.sleep()` on the
+   synchronous init path. Fixed by adding a fast path: if the file's mtime is
+   unchanged since the cache was written, skip it immediately without the
+   stability check. The stability check now runs only for new/changed files.
+
+Also fixed a latent key-mismatch: `_incremental_scan()` stored
+`self._file_mtimes[note.slug]` while `load_cache()` and the deleted-file
+detection use `rel_path`. Now consistently `rel_path`.
+
+### Verification (real vault, 1644 notes)
+
 ```
-plugins/memory/obsidian_vault/tests/
-  22 passed in 390.33s
+initialize() returned in 13.29s        # was: timed out at 601s
+  notes loaded immediately: 1644
+  scan_state: idle
+  use_fts5: True
+  search sanity: count=3 results=3
 ```
+
+Warm-cache incremental scan micro-benchmark: **0.04 s for 30 notes**
+(previously ~15 s = 30 × 0.5 s sleep). Scales to ~2 s for 1644 notes.
+
+### Test Results
+```
+plugins/memory/obsidian_vault/tests/test_p0_remediation.py
+  12 passed in 84.19s
+plugins/memory/obsidian_vault/tests/test_vault_write_read_consistency.py
+  12 passed in 193.65s
+```
+New regression tests added this cycle:
+- `test_p0_warm_cache_scan_does_not_sleep` — warm cache must not sleep per file
+- `test_p0_changed_file_still_reindexed` — changed files still re-parsed
 
 ### Files Changed This Cycle
 - `plugins/memory/obsidian_vault/vault.py`
@@ -261,7 +300,10 @@ plugins/memory/obsidian_vault/tests/
 - `plugins/memory/obsidian_vault/tests/test_p0_remediation.py`
 - `plugins/memory/obsidian_vault/tests/test_vault_write_read_consistency.py`
 
-**Result:** Agent initialization no longer blocks on full vault scan. The 601 s timeout path is removed.
+**Result:** Agent initialization no longer blocks on full vault scan or on
+per-file stability sleeps. The 601 s timeout path is removed and verified
+against the real 1644-note vault (init now ~13 s, dominated by SQLite cache
+load + FTS5 warm-up, not sleeps).
 
 ---
 
