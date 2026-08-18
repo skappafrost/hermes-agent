@@ -161,16 +161,33 @@ class ObsidianVaultProvider(MemoryProvider):
         count = self._index.scan(vault_path, max_notes=max_notes, background=True)
         self._vault_path = vault_path
         self._initialized = True
+        # Note: the actual index build happens on a daemon thread; callers of the
+        # provider's tools should check ``is_ready`` and report "starting up"
+        # until the background scan finishes.
         logger.info(
-            "obsidian_vault: initialized from %s (immediate notes: %d; background scan state: %s)",
+            "obsidian_vault: async initialization started from %s (immediate notes: %d; background scan state: %s)",
             vault_path,
             count,
             self._index.scan_state,
         )
 
+    def _wait_for_ready(self, timeout: float = 10.0) -> bool:
+        """Test helper: block until the background scan is ready."""
+        import time as _time
+        deadline = _time.time() + timeout
+        while _time.time() < deadline:
+            if self._index and self._index.is_ready:
+                return True
+            _time.sleep(0.05)
+        return False
+
     def system_prompt_block(self) -> str:
-        """Return a static system prompt block with vault info."""
-        if not self._initialized or self._index.is_empty():
+        """Return a static system prompt block with vault info.
+
+        Avoids blocking or returning stale data while the index is still being
+        built in the background.
+        """
+        if not self._initialized or not self._index.is_ready or self._index.is_empty():
             return ""
         stats = self._index.get_stats()
         return (
@@ -181,11 +198,16 @@ class ObsidianVaultProvider(MemoryProvider):
         )
 
     def prefetch(self, query: str, *, session_id: str = "") -> str:
-        """Recall relevant vault notes for the upcoming turn."""
-        if not self._initialized or self._index.is_empty():
+        """Recall relevant vault notes for the upcoming turn.
+
+        Returns nothing until the background index build is ready so that the
+        first turn never waits on the vault.
+        """
+        if not self._initialized or not self._index.is_ready or self._index.is_empty():
             return ""
 
         results = self._index.search(query, limit=5)
+
         if not results:
             return ""
 
@@ -572,6 +594,9 @@ class ObsidianVaultProvider(MemoryProvider):
 
     def handle_tool_call(self, tool_name: str, args: Dict[str, Any], **kwargs) -> str:
         """Handle vault tool calls."""
+        if not self._index.is_ready:
+            return json.dumps({"error": "Vault index is still starting up, please wait."})
+
         if tool_name == "vault_search":
             return self._handle_search(args)
         elif tool_name == "vault_get_note":
@@ -605,6 +630,9 @@ class ObsidianVaultProvider(MemoryProvider):
         raise NotImplementedError(f"obsidian_vault does not handle tool {tool_name}")
 
     def _handle_search(self, args: Dict[str, Any]) -> str:
+        if not self._index.is_ready:
+            return json.dumps({"error": "Vault index is still starting up, please wait."})
+
         query = args.get("query", "")
         category = args.get("category")
         tag = args.get("tag")

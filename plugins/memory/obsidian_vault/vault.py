@@ -608,7 +608,12 @@ class VaultIndex:
             cache_dir = self._cache_dir
         else:
             cache_dir = vault_path / ".obsidian_vault_cache"
-        cache_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            cache_dir.mkdir(parents=True, exist_ok=True)
+        except FileExistsError:
+            # Another thread/process created the directory between the check
+            # and the mkdir; this is harmless on Windows.
+            pass
         vault_hash = hashlib.md5(str(vault_path.resolve()).encode()).hexdigest()[:12]
         return cache_dir / f"index_{vault_hash}.json"
 
@@ -850,11 +855,11 @@ class VaultIndex:
         Uses incremental indexing: only re-parses files that have changed.
         Loads from cache if available and valid.
 
-        If ``background`` is True (the default), a cache that is empty or only
-        partially loaded will not trigger a synchronous full scan. Instead, any
-        required full scan is scheduled on a daemon thread and this method
-        returns 0 immediately. The provider/tool layer must remain usable while
-        the background builder runs.
+        If ``background`` is True (the default), the entire scan process is
+        scheduled on a daemon thread and this method returns 0 immediately.
+        The provider/tool layer must remain usable while the background builder
+        runs; calls should check ``scan_state``/``is_ready`` and report
+        "starting up" until the state becomes ``ready``.
         """
         vault_path = vault_path.resolve()
         if not vault_path.is_dir():
@@ -863,20 +868,6 @@ class VaultIndex:
 
         self._max_notes = max_notes
 
-        # Try to load from cache first
-        cache_loaded = self.load_cache(vault_path)
-
-        with self._lock:
-            self._vault_path = vault_path
-
-        if cache_loaded:
-            # Cache structurally valid; do a quick synchronous incremental scan
-            # for any files changed since the cache was written.  The dense
-            # embedding pipeline is initialized lazily on first semantic search
-            # so that agent init is never blocked by model loading.
-            return self._incremental_scan(vault_path, max_notes)
-
-        # No usable cache.  Avoid blocking the caller with a full scan.
         if background:
             with self._lock:
                 if self._scan_state in ("building", "loading"):
@@ -887,13 +878,8 @@ class VaultIndex:
 
             def _run_scan():
                 try:
-                    # Initialize embedding pipeline lazily inside the background
-                    # thread so model loading does not block agent init.
-                    if DENSE_EMBEDDINGS_AVAILABLE and self._embedding_pipeline is None:
-                        self._init_embedding_pipeline(vault_path)
-                    with self._lock:
-                        self._scan_state = "building"
-                    count = self._full_scan(vault_path, max_notes)
+                    # Synchronous scan inside the background thread.
+                    count = self._do_scan(vault_path, max_notes)
                     with self._lock:
                         self._scan_state = "ready"
                     logger.info("Background vault scan finished for %s: %d notes", vault_path, count)
@@ -911,9 +897,25 @@ class VaultIndex:
             logger.info("Started background vault scan for %s", vault_path)
             return 0
 
-        # Synchronous fallback (used only by tests or explicit callers).
+        # Synchronous path (used by tests or explicit callers).
         if DENSE_EMBEDDINGS_AVAILABLE and self._embedding_pipeline is None:
             self._init_embedding_pipeline(vault_path)
+        count = self._do_scan(vault_path, max_notes)
+        with self._lock:
+            self._scan_state = "ready"
+        return count
+
+    def _do_scan(self, vault_path: Path, max_notes: int) -> int:
+        """Internal synchronous scan: load cache, then incremental or full scan."""
+        cache_loaded = self.load_cache(vault_path)
+
+        with self._lock:
+            self._vault_path = vault_path
+
+        if cache_loaded:
+            return self._incremental_scan(vault_path, max_notes)
+
+        # No usable cache — full scan.
         return self._full_scan(vault_path, max_notes)
 
     def _init_embedding_pipeline(self, vault_path: Path):
@@ -1048,9 +1050,10 @@ class VaultIndex:
                         processed += 1
                         continue
 
-                    # New or changed file: verify it is stable (not being
-                    # written to) before parsing.
-                    if not self._is_file_stable(md_file):
+                    # New or changed file: skip the expensive stability sleep during
+                    # scan; if the file is being written to, parse_note will fail
+                    # and we simply skip it. This keeps agent init fast.
+                    if not self._is_file_stable_fast(md_file):
                         logger.debug("File not stable, skipping: %s", md_file)
                         processed += 1
                         continue
@@ -1085,7 +1088,7 @@ class VaultIndex:
                             mtime = stat.st_mtime
                             old_mtime = self._file_mtimes.get(rel_path)
                             
-                            if not self._is_file_stable(md_file):
+                            if not self._is_file_stable_fast(md_file):
                                 logger.debug("File not stable, skipping: %s", md_file)
                                 break
                             
@@ -1497,6 +1500,28 @@ class VaultIndex:
         except (OSError, PermissionError):
             return False
 
+    def _is_file_stable_fast(self, path: Path) -> bool:
+        """Non-blocking variant used during scans.
+
+        We cannot afford a 0.5s sleep per file when indexing hundreds or
+        thousands of notes during agent init.  If the file is mid-write, the
+        parse step will fail and we skip it.
+        """
+        try:
+            if not path.exists():
+                return False
+            size1 = path.stat().st_size
+            if size1 == 0:
+                return False
+            # Tiny nap (10ms) to catch very fast writes without blocking init.
+            time.sleep(0.01)
+            if not path.exists():
+                return False
+            size2 = path.stat().st_size
+            return size1 == size2
+        except (OSError, PermissionError):
+            return False
+
     def _wait_for_stable(self, path: Path, max_wait: float = 10.0, poll_interval: float = 0.5) -> bool:
         """Wait for a file to become stable (size stops changing).
         
@@ -1585,16 +1610,19 @@ class VaultIndex:
                 return []
 
             # Use hybrid search if semantic mode and dense embeddings available
-            if semantic and DENSE_EMBEDDINGS_AVAILABLE and self._hybrid_searcher:
-                return self._hybrid_searcher.search(
-                    query=query,
-                    limit=limit,
-                    offset=offset,
-                    category=category,
-                    tags=tags,
-                    sort_by=sort_by
-                )
-            
+            if semantic and DENSE_EMBEDDINGS_AVAILABLE:
+                if self._hybrid_searcher is None and self._vault_path:
+                    self._init_embedding_pipeline(self._vault_path)
+                if self._hybrid_searcher:
+                    return self._hybrid_searcher.search(
+                        query=query,
+                        limit=limit,
+                        offset=offset,
+                        category=category,
+                        tags=tags,
+                        sort_by=sort_by
+                    )
+
             # Fallback to existing FTS5 search
             if self._use_fts5 and self._db:
                 return self._search_fts5(parsed, mode, limit, offset, sort_by, semantic, semantic_weight)
@@ -2044,6 +2072,12 @@ class VaultIndex:
     def is_empty(self) -> bool:
         with self._lock:
             return len(self._notes) == 0
+
+    @property
+    def is_ready(self) -> bool:
+        """Return True when the background scan has finished successfully."""
+        with self._lock:
+            return self._scan_state == "ready"
 
     @property
     def scan_state(self) -> str:

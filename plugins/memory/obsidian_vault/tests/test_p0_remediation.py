@@ -16,6 +16,7 @@ def test_p0_faiss_staleness_external_delete():
         config = {"vault_path": str(tmp), "max_notes": 10000}
         p = ObsidianVaultProvider(config=config)
         p.initialize("test", hermes_home=str(tmp.parent))
+        p._wait_for_ready()
         
         # Create a note
         create_res = p._handle_create_note({
@@ -47,6 +48,7 @@ def test_p0_faiss_staleness_external_modify():
         config = {"vault_path": str(tmp), "max_notes": 10000}
         p = ObsidianVaultProvider(config=config)
         p.initialize("test", hermes_home=str(tmp.parent))
+        p._wait_for_ready()
         
         # Create a note
         create_res = p._handle_create_note({
@@ -86,6 +88,7 @@ def test_p0_faiss_update_note():
         config = {"vault_path": str(tmp), "max_notes": 10000}
         p = ObsidianVaultProvider(config=config)
         p.initialize("test", hermes_home=str(tmp.parent))
+        p._wait_for_ready()
         
         # Create note
         create_res = p._handle_create_note({
@@ -125,6 +128,7 @@ def test_p0_spell_correction_suggestions():
         config = {"vault_path": str(tmp), "max_notes": 10000}
         p = ObsidianVaultProvider(config=config)
         p.initialize("test", hermes_home=str(tmp.parent))
+        p._wait_for_ready()
         
         # Create a note with a specific term
         create_res = p._handle_create_note({
@@ -175,6 +179,7 @@ def test_p0_concurrent_write_search():
         config = {"vault_path": str(tmp), "max_notes": 10000}
         p = ObsidianVaultProvider(config=config)
         p.initialize("test", hermes_home=str(tmp.parent))
+        p._wait_for_ready()
         
         # Simulate concurrent write by creating a file slowly
         import threading
@@ -217,6 +222,7 @@ def test_p0_cold_start_validation():
         config = {"vault_path": str(tmp), "max_notes": 10000}
         p = ObsidianVaultProvider(config=config)
         p.initialize("test", hermes_home=str(tmp.parent))
+        p._wait_for_ready()
         
         # Create some notes
         p._handle_create_note({"title": "Test 1", "body": "Content 1", "tags": ["test"]})
@@ -228,7 +234,8 @@ def test_p0_cold_start_validation():
         # Simulate restart by creating new provider
         p2 = ObsidianVaultProvider(config=config)
         p2.initialize("test2", hermes_home=str(tmp.parent))
-        
+        p2._wait_for_ready()
+
         # Should work correctly after restart
         search_res = json.loads(p2._handle_search({"query": "test", "limit": 5}))
         assert search_res.get("count", 0) == 2, "Should find both notes after restart"
@@ -245,6 +252,7 @@ def test_p0_faiss_rebuild_on_threshold():
         config = {"vault_path": str(tmp), "max_notes": 10000}
         p = ObsidianVaultProvider(config=config)
         p.initialize("test", hermes_home=str(tmp.parent))
+        p._wait_for_ready()
         
         # Create and delete many notes to trigger rebuild
         for i in range(30):
@@ -453,6 +461,51 @@ def test_p0_changed_file_still_reindexed():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_p0_changed_files_do_not_sleep_per_file():
+    """Regression: changed files must not trigger 0.5s stability sleeps.
+
+    Before the fix, when a cache existed but many files had newer mtimes,
+    ``_incremental_scan`` called ``_is_file_stable`` which slept 0.5s for
+    every changed file.  For a vault with ~900 files this exceeded the
+    601s agent init timeout.  The fast stability check must keep the scan
+    far below that budget.
+    """
+    tmp = Path(tempfile.mkdtemp())
+    try:
+        vault_path = tmp / "vault"
+        vault_path.mkdir()
+        cache_dir = tmp / "cache"
+        cache_dir.mkdir()
+
+        n_notes = 30
+        for i in range(n_notes):
+            (vault_path / f"note-{i}.md").write_text(f"# Note {i}\ncontent {i}", encoding="utf-8")
+
+        from plugins.memory.obsidian_vault.vault import VaultIndex
+
+        # Build cache.
+        idx1 = VaultIndex(cache_dir=cache_dir)
+        idx1.scan(vault_path, max_notes=10000, background=False)
+        assert len(idx1._notes) == n_notes
+
+        # Invalidate mtimes so every file looks changed.
+        for rel_path in list(idx1._file_mtimes.keys()):
+            idx1._file_mtimes[rel_path] = 0.0
+
+        # Re-scan with the same index.  Old code would sleep 0.5s per file.
+        start = time.time()
+        idx1._incremental_scan(vault_path, 10000)
+        elapsed = time.time() - start
+
+        assert len(idx1._notes) == n_notes, f"Expected {n_notes} notes, got {len(idx1._notes)}"
+        # Old behaviour: 30 * 0.5s = 15s.  New behaviour must be < 2s.
+        assert elapsed < 2.0, f"Changed-file scan blocked for {elapsed:.1f}s (expected < 2s)"
+
+        print(f"✅ P0 changed-file no-sleep: PASS ({elapsed:.2f}s for {n_notes} changed files)")
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 # Hook to build an index with a specific cache_dir for the tests above.
 # The provider normally uses the vault's own cache dir; expose a helper.
 import sqlite3  # noqa: E402
@@ -479,6 +532,7 @@ def run_all_p0_tests():
     test_p0_provider_initialize_does_not_block()
     test_p0_warm_cache_scan_does_not_sleep()
     test_p0_changed_file_still_reindexed()
+    test_p0_changed_files_do_not_sleep_per_file()
 
     print("=" * 60)
     print("ALL P0 TESTS PASSED!")
