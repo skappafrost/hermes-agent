@@ -56,6 +56,7 @@ import {
   inlineDiffFromResult,
   isCardTool,
   isFileEditTool,
+  isMemoryLikeTool,
   isPreviewableTarget,
   looksRedundant,
   type SearchResultRow,
@@ -480,8 +481,8 @@ function ToolEntry({ part }: ToolEntryProps) {
 
   const showDiffStats = !isPending && Boolean(diffStats && (diffStats.added > 0 || diffStats.removed > 0))
 
-  // Landed memory write gets gold→purple chrome instead of the plain scaffold grey.
-  const memoryLegendary = !isPending && part.toolName === 'memory' && view.status === 'success'
+  // Landed memory/vault write gets gold→purple chrome instead of the plain scaffold grey.
+  const memoryLegendary = !isPending && (part.toolName === 'memory' || isMemoryLikeTool(part.toolName)) && view.status === 'success'
   const memoryMetaClass = memoryLegendary ? 'tool-memory-legendary-meta' : undefined
 
   // The header trailing slot only carries the live duration timer while the
