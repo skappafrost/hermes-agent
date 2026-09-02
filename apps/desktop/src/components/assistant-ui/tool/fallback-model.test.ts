@@ -488,3 +488,28 @@ describe('buildToolView memory status', () => {
     expect(view.subtitle).toContain('Memory is full')
   })
 })
+
+describe('buildToolView vault status', () => {
+  const vault = (toolName: 'vault_create_note' | 'vault_update_note' | 'vault_append_note', overrides: Partial<Parameters<typeof part>[0]> = {}) =>
+    buildToolView(part({ toolName, ...overrides }), '')
+
+  it.each(['vault_create_note', 'vault_update_note', 'vault_append_note'] as const)(
+    'treats a successful %s payload as success',
+    toolName => {
+      const view = vault(toolName, {
+        result: { success: true, slug: 'test-note', title: 'Test note', path: '/vault/test-note.md' }
+      })
+
+      expect(view.status).toBe('success')
+      expect(view.icon).toBe('brain')
+    }
+  )
+
+  it('uses localized title for vault_update_note', () => {
+    const view = vault('vault_update_note', {
+      result: { success: true, slug: 'test-note', title: 'Test note', path: '/vault/test-note.md' }
+    })
+
+    expect(view.title).toBe('Updated vault note')
+  })
+})

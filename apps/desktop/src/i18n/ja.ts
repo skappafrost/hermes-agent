@@ -3140,6 +3140,10 @@ export const ja = defineLocale({
         },
         terminal: { done: 'コマンドを実行しました', pending: 'コマンドを実行中', pendingAction: '実行中' },
         todo: { done: 'Todo を更新しました', pending: 'Todo を更新中', pendingAction: '更新中' },
+        vault_append_note: { done: 'Vault に保存しました', pending: 'Vault に保存中', pendingAction: '保存中' },
+        vault_create_note: { done: 'Vault に保存しました', pending: 'Vault に保存中', pendingAction: '保存中' },
+        vault_delete_note: { done: 'Vault ノートを削除しました', pending: 'Vault ノートを削除中', pendingAction: '削除中' },
+        vault_update_note: { done: 'Vault ノートを更新しました', pending: 'Vault ノートを更新中', pendingAction: '更新中' },
         vision_analyze: { done: '画像を分析しました', pending: '画像を分析中', pendingAction: '分析中' },
         web_extract: {
           done: 'Web ページを読み取りました',
