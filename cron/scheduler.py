@@ -4711,6 +4711,43 @@ def _parse_wake_gate(script_output: str) -> bool:
     return gate.get("wakeAgent", True) is not False
 
 
+# Separator written by ``save_job_output``'s record between the echoed prompt
+# and the agent's actual answer. Leading/trailing newlines keep it anchored to
+# a real heading line instead of a mid-sentence mention.
+_CRON_OUTPUT_RESPONSE_MARKER = "\n## Response\n"
+
+
+def _extract_cron_output_response(doc: str) -> str:
+    """Return the ``## Response`` body of a saved cron output document.
+
+    ``save_job_output`` persists a full audit record: header, the ENTIRE
+    assembled prompt (for a skill-backed job that is the whole skill text —
+    routinely 10-20K characters), then ``## Response`` with the agent's
+    answer. Injecting that document verbatim as ``context_from`` context
+    spends the 8K budget on the job's own echoed prompt and can truncate the
+    answer away completely — exactly the part continuity exists to carry
+    forward.
+
+    Scans from the END so heading-shaped text inside the echoed prompt (skill
+    documentation, a previous run's own injected block) cannot be mistaken for
+    the separator. Falls back to the whole document whenever no Response body
+    is present (``blocked_config`` notices, error records, ``no_agent`` script
+    output), so a run never loses context it used to have.
+    """
+    marker_at = doc.rfind(_CRON_OUTPUT_RESPONSE_MARKER)
+    if marker_at < 0:
+        return doc.strip()
+    body = doc[marker_at + len(_CRON_OUTPUT_RESPONSE_MARKER):].strip()
+    if not body:
+        return doc.strip()
+    # Keep the run timestamp so the agent can reason about recency ("this was
+    # 4 hours ago") instead of seeing a bare disembodied report.
+    for line in doc[:marker_at].splitlines():
+        if line.startswith("**Run Time:**"):
+            return f"{line.strip()}\n\n{body}"
+    return body
+
+
 def _build_job_prompt(
     job: dict,
     prerun_script: Optional[tuple] = None,
@@ -4810,7 +4847,9 @@ def _build_job_prompt(
                 )
                 if not output_files:
                     continue  # silent skip — no output yet
-                latest_output = output_files[0].read_text(encoding="utf-8").strip()
+                latest_output = _extract_cron_output_response(
+                    output_files[0].read_text(encoding="utf-8")
+                )
                 # Truncate to 8K characters to avoid prompt bloat
                 _MAX_CONTEXT_CHARS = 8000
                 if len(latest_output) > _MAX_CONTEXT_CHARS:
