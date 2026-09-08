@@ -38,6 +38,19 @@ export * from './types'
 // pulling this module's formatting/i18n weight into the cost path.
 export { isCardTool, isFileEditTool, isSilentTool }
 
+const MEMORY_LIKE_TOOLS = new Set([
+  'memory',
+  'vault_create_note',
+  'vault_update_note',
+  'vault_append_note',
+])
+
+/** Tools whose successful writes should receive the same gold→purple
+ *  "memory legendary" chrome as the built-in memory tool. */
+export function isMemoryLikeTool(toolName: string): boolean {
+  return MEMORY_LIKE_TOOLS.has(toolName)
+}
+
 export interface DiffLineStats {
   added: number
   removed: number
@@ -205,6 +218,10 @@ const TOOL_META: Record<ToolTitleKey, ToolMetaSpec> = {
     tone: 'terminal'
   },
   todo: { icon: 'tools', tone: 'agent' },
+  vault_create_note: { icon: 'brain', tone: 'agent' },
+  vault_update_note: { icon: 'brain', tone: 'agent' },
+  vault_append_note: { icon: 'brain', tone: 'agent' },
+  vault_delete_note: { icon: 'brain', tone: 'agent' },
   vision_analyze: {
     icon: 'eye',
     tone: 'image'
