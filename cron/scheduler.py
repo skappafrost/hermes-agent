@@ -7135,6 +7135,95 @@ def run_job(
             _teardown_cron_agent(agent, job_id)
 
 
+def _finalize_cron_session(session_db, agent, job_id: str, job_name: str, cron_session_id: str) -> None:
+    """Title, classify, end and release the cron session after the agent turn has returned."""
+    # Bound every DB op so storage failure cannot hold the dispatch guard.
+    _session_db = _BoundedCronSessionDB(session_db, job_id)
+    # Compression may have rotated the run onto a continuation: finalize that, not the stale cron
+    # id. SessionDB lineage is authoritative; agent.session_id is only a fail-safe.
+    _final_cron_session_id = cron_session_id
+    try:
+        _compression_tip = _session_db.get_compression_tip(cron_session_id)
+        if _compression_tip:
+            _final_cron_session_id = _compression_tip
+    except (Exception, KeyboardInterrupt) as e:
+        with contextlib.suppress((Exception, KeyboardInterrupt)):
+            _agent_session_id = getattr(agent, "session_id", None)
+            # CLI (single-process) path: the approval contextvar is only bound during gateway/TUI turns and
+            # HERMES_SESSION_KEY is not in the CLI environment, so the key resolves empty here. Since #64240
+            # the CLI drains completions through a positive-ownership filter keyed on the durable
+            # AIAgent.session_id — an empty session_key would fail closed and the CLI could never claim its
+            # own completions, while a restored foreign event with an empty key could leak into any
+            # unfiltered consumer (#64484). Stamp the parent's durable session id instead; compression
+            # rotations are handled on the drain side via resolve_resume_session_id lineage resolution.
+            if _agent_session_id:
+                _final_cron_session_id = _agent_session_id
+        logger.debug("Job '%s': failed to resolve cron compression tip: %s", job_id, e)
+    # Title must persist BEFORE end_session()/close(). Run-time suffix keeps it unique against the
+    # sessions.title index; the fallbacks below guarantee a non-blank title.
+    try:
+        # Title the cron session from the job (name -> id) and PERSIST it BEFORE end_session()/close() tear
+        # the connection down, so the close can never run over an in-flight title write (#50536).
+        _title_base = " ".join(job_name.split())[:60].strip() or f"cron {job_id}"
+        _cron_title = f"{_title_base} · {_hermes_now().strftime('%b %d %H:%M')}"
+        if not _set_cron_session_title(_session_db, _final_cron_session_id, _cron_title):
+            _set_cron_session_title(_session_db, _final_cron_session_id, f"cron {job_id}")
+    except (Exception, KeyboardInterrupt) as e:
+        logger.debug("Job '%s': failed to set cron session title: %s", job_id, e)
+        # Never leave the session untitled.
+        # Try the next free title in the lineage, then a bare id-stamped title. See #50535.
+        for _fallback in (
+            getattr(_session_db, "get_next_title_in_lineage", lambda b: b)(f"cron {job_id}"),
+            f"cron {job_id} {_final_cron_session_id[-6:]}"):
+            try:
+                if _set_cron_session_title(_session_db, _final_cron_session_id, _fallback):
+                    break
+            except (Exception, KeyboardInterrupt):
+                continue
+    # Book cron_complete only when the last row is a real assistant reply ([SILENT] counts). Only a
+    # POSITIVELY recognized bad status downgrades (keep tuple in sync with
+    # session_lifecycle_statuses); unknown values / probe failures fail OPEN.
+    # Verified completion booking (#93820): the run may only be recorded as cron_complete when the session's
+    # LAST message row is a real assistant reply — a plain answer or the [SILENT] sentinel (both are
+    # assistant-text rows, so both classify as 'complete'). A turn that died after a tool call,
+    # mid-API-wait, or without any assistant text leaves the last row as a tool result / pending call / user
+    # prompt and must not surface as a healthy run. session_lifecycle_statuses is the existing cost-bounded
+    # classifier for exactly this shape. Only a POSITIVELY recognized pathological status (see the status
+    # vocabulary in hermes_state's session_lifecycle_statuses docstring — keep the tuple below in sync when
+    # it grows) downgrades the booking: an unknown value (newer classifier shape, test doubles) keeps the
+    # historical reason, and so does a failed probe — the booking itself is FAIL-OPEN on probe errors,
+    # because classification is best-effort metadata and must not mislabel a healthy run.
+    _end_reason = "cron_complete"
+    try:
+        _statuses = _session_db.session_lifecycle_statuses([_final_cron_session_id])
+        _lifecycle = _statuses.get(_final_cron_session_id)
+        if _lifecycle in ("interrupted", "error", "empty"):
+            _end_reason = "cron_incomplete_no_output"
+            logger.warning(
+                "Job '%s': session ended without a final assistant "
+                "message (lifecycle=%s) — booking run as %s",
+                job_id, _lifecycle, _end_reason)
+    except (Exception, KeyboardInterrupt) as e:
+        logger.debug("Job '%s': session lifecycle classification failed: %s", job_id, e)
+    try:
+        _session_db.end_session(_final_cron_session_id, _end_reason)
+        # The scheduler owns cron-session finalization. AIAgent.close() also
+        # finalizes owned session rows by default; once the shared SessionDB is
+        # released below, that second end_session() would reopen the just-closed
+        # SQLite handle (#94736). The reason is durably booked, so disarm only the
+        # agent's redundant row-finalization; its resource teardown still runs in
+        # _teardown_cron_agent.
+        if agent is not None:
+            agent._end_session_on_close = False
+    except (Exception, KeyboardInterrupt) as e:
+        logger.debug("Job '%s': failed to end session: %s", job_id, e)
+    try:
+        from hermes_state_registry import release_or_close
+        release_or_close(_session_db)
+    except (Exception, KeyboardInterrupt) as e:
+        logger.debug("Job '%s': failed to close SQLite session store: %s", job_id, e)
+
+
 def _teardown_cron_agent(
     agent, job_id: str, *, timeout_seconds: Optional[float] = None
 ) -> None:

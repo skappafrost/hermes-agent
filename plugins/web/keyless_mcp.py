@@ -79,6 +79,21 @@ def keyless_enabled() -> bool:
         return True
 
 
+_BACKEND_KEYS = ("backend", "search_backend", "extract_backend")
+
+
+def _web_config_selects(name: str) -> bool:
+    """True when any ``web.backend`` / ``search_backend`` / ``extract_backend`` names *name*.
+
+    Restored from upstream (d4d4ecfae0 plugins/web/keyless_mcp.py:91) — lost when
+    the 2026-09-08 custom-side-wins squash replaced this file with its pre-split
+    version. plugins/web/firecrawl/provider.py::_is_explicit_firecrawl_selection
+    imports it."""
+    import tools.web_tools as _wt
+    web_cfg = _wt._load_web_config()
+    return any((web_cfg.get(key) or "").lower().strip() == name for key in _BACKEND_KEYS)
+
+
 def provider_tier(name: str) -> str:
     """Return the user-selected tier for *name*: ``free``, ``paid``, or ``auto``.
 
