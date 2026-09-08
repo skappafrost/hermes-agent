@@ -5055,7 +5055,7 @@ def _scan_assembled_cron_prompt(
     create/update-time guarantee at runtime (defense-in-depth for legacy
     jobs that predate the create-time scanner).
     """
-    from tools.cronjob_tools import _scan_cron_prompt, _scan_cron_skill_assembled
+    from tools.cronjob_prompt_scan import _scan_cron_prompt, _scan_cron_skill_assembled
 
     if has_skills or has_injected_data:
         # Runtime-loaded content (vetted skill markdown and/or data from
