@@ -229,13 +229,26 @@ class ApinexWebSearchProvider(BaseWebSearchProvider):
 
     @staticmethod
     async def _fc_extract(urls: List[str], format: Optional[str]) -> List[Dict[str, Any]]:
+        from plugins.web._common import extract_fail, provider_env as _penv
+
+        # Docker rescue: when Firecrawl local is the target and it is down,
+        # bring the stack up (Docker Desktop → compose) before delegating.
+        api_url = (_penv("FIRECRAWL_API_URL") or "").strip()
+        if "localhost" in api_url or "127.0.0.1" in api_url:
+            from plugins.web.apinex.docker_rescue import ensure_firecrawl_local
+
+            healthy = await asyncio.to_thread(ensure_firecrawl_local)
+            if not healthy:
+                return extract_fail(
+                    urls,
+                    "Firecrawl local is down and the Docker rescue could not bring it up "
+                    "(see web.apinex_docker_rescue; check Docker Desktop / the firecrawl stack)",
+                )
         try:
             from plugins.web.firecrawl.provider import FirecrawlWebSearchProvider
 
             return await FirecrawlWebSearchProvider().extract(urls, format=format)
         except Exception as exc:  # noqa: BLE001 — fallback is best-effort
-            from plugins.web._common import extract_fail
-
             return extract_fail(urls, f"Firecrawl fallback failed: {exc}")
 
     # ---- picker ---------------------------------------------------------

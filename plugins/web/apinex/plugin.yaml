@@ -1,6 +1,6 @@
 name: web-apinex
 version: 1.0.0
-description: "APInex web search and content extraction (POST /v1/tools/web/*). Requires APINEX_API_KEY from https://apinex.bond — free web tools tier. Falls back to exa (search) / firecrawl (extract) on failure."
+description: "APInex web tools: search + extract (POST /v1/tools/web/*) with auto-fallback to exa/firecrawl, plus the web_research tool (multi-step research with citations). Requires APINEX_API_KEY from https://apinex.bond — free web tools tier."
 author: Skappa (custom)
 kind: backend
 provides_web_providers:
