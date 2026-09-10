@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 logger = logging.getLogger(__name__)
 
@@ -28,15 +28,19 @@ def _check_apinex_available() -> bool:
     return bool(get_provider_env("APINEX_API_KEY"))
 
 
-async def _handle_web_research(query: str, effort: str = "lite", task_id: Optional[str] = None) -> str:
+async def _handle_web_research(args: dict, **kwargs) -> str:
     """Run a multi-step web research query via APInex.
+
+    Registry dispatch calls handlers as ``handler(args, task_id=..., session_id=..., ...)``
+    — accept the args dict + tolerant kwargs (Spotify-style contract).
 
     Returns JSON ``{"success": true, "content": ..., "sources": [...], "effort": ...}``
     or ``{"success": false, "error": ...}``.
     """
     from plugins.web.apinex.provider import _apinex_post
 
-    effort = (effort or "lite").strip().lower()
+    query = str(args.get("query") or "")
+    effort = str(args.get("effort") or "lite").strip().lower()
     if effort not in ("lite", "standard", "deep"):
         effort = "lite"
 
