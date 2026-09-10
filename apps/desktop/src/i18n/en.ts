@@ -3700,6 +3700,7 @@ export const en: Translations = {
         vault_update_note: { done: 'Updated vault note', pending: 'Updating vault note', pendingAction: 'Updating' },
         vision_analyze: { done: 'Analyzed image', pending: 'Analyzing image', pendingAction: 'Analyzing' },
         web_extract: { done: 'Read webpage', pending: 'Reading webpage', pendingAction: 'Reading' },
+        web_research: { done: 'Researched the web', pending: 'Researching', pendingAction: 'Researching' },
         web_search: { done: 'Searched web', pending: 'Searching web', pendingAction: 'Searching' },
         write_file: { done: 'Edited file', pending: 'Editing file', pendingAction: 'Editing' }
       }

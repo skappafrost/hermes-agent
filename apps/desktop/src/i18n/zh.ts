@@ -3831,6 +3831,7 @@ export const zh: Translations = {
         vision_analyze: { done: '已分析图片', pending: '正在分析图片', pendingAction: '正在分析' },
         web_extract: { done: '已读取网页', pending: '正在读取网页', pendingAction: '正在读取' },
         web_search: { done: '已搜索网页', pending: '正在搜索网页', pendingAction: '正在搜索' },
+        web_research: { done: '已完成网络调研', pending: '正在调研', pendingAction: '正在调研' },
         write_file: { done: '已编辑文件', pending: '正在编辑文件', pendingAction: '正在编辑' }
       }
     }

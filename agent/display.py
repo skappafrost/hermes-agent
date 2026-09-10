@@ -487,6 +487,7 @@ def prepare_tool_preview(tool_name: str, args: dict | None, *, fallback: str, ma
 
 _TOOL_VERBS: dict[str, str] = {
     "web_search": "Searching the web", "web_extract": "Reading",
+    "web_research": "Researching",
     "browser_navigate": "Browsing", "browser_click": "Clicking", "browser_type": "Typing",
     "read_file": "Reading", "write_file": "Writing", "patch": "Editing", "search_files": "Searching files",
     "terminal": "Running", "execute_code": "Running code",

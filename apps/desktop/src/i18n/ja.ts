@@ -3293,6 +3293,7 @@ export const ja = defineLocale({
           pendingAction: '読み取り中'
         },
         web_search: { done: 'Web を検索しました', pending: 'Web を検索中', pendingAction: '検索中' },
+        web_research: { done: 'Web を調査しました', pending: 'Web を調査中', pendingAction: '調査中' },
         write_file: { done: 'ファイルを編集しました', pending: 'ファイルを編集中', pendingAction: '編集中' }
       }
     }

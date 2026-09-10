@@ -35,6 +35,7 @@ export type ToolTitleKey =
   | 'vault_update_note'
   | 'vision_analyze'
   | 'web_extract'
+  | 'web_research'
   | 'web_search'
   | 'write_file'
 

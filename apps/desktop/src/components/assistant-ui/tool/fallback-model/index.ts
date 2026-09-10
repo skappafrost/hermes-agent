@@ -227,6 +227,7 @@ const TOOL_META: Record<ToolTitleKey, ToolMetaSpec> = {
     tone: 'image'
   },
   web_extract: { icon: 'globe', tone: 'web' },
+  web_research: { icon: 'search', tone: 'web' },
   web_search: { icon: 'search', tone: 'web' },
   write_file: { icon: 'edit', tone: 'file' }
 }

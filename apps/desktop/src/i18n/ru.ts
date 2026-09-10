@@ -3692,6 +3692,7 @@ export const ru = defineLocale({
         },
         web_extract: { done: 'Веб-страница прочитана', pending: 'Читаю веб-страницу', pendingAction: 'Читаю' },
         web_search: { done: 'Поиск в вебе выполнен', pending: 'Ищу в вебе', pendingAction: 'Ищу' },
+        web_research: { done: 'Веб-исследование выполнено', pending: 'Исследую веб', pendingAction: 'Исследую' },
         write_file: { done: 'Файл изменён', pending: 'Изменяю файл', pendingAction: 'Изменяю' }
       }
     }

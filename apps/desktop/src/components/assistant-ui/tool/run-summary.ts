@@ -19,18 +19,20 @@ export function isToolCallPart<T extends { type: string }>(part: T): part is Ext
   return part.type === 'tool-call'
 }
 
-type RunCategory = 'delegate' | 'edit' | 'explore' | 'other' | 'run'
+type RunCategory = 'delegate' | 'edit' | 'explore' | 'other' | 'research' | 'run' | 'web'
 
 // Clause order is fixed so the same run always reads the same way, whichever
 // category happens to be live.
-const CATEGORY_ORDER: readonly RunCategory[] = ['edit', 'explore', 'run', 'delegate', 'other']
+const CATEGORY_ORDER: readonly RunCategory[] = ['edit', 'explore', 'web', 'research', 'run', 'delegate', 'other']
 
 const CATEGORY_COPY: Record<RunCategory, { noun: [string, string]; past: string; present: string }> = {
   delegate: { noun: ['task', 'tasks'], past: 'Delegated', present: 'Delegating' },
   edit: { noun: ['file', 'files'], past: 'Edited', present: 'Editing' },
   explore: { noun: ['file', 'files'], past: 'Explored', present: 'Exploring' },
   other: { noun: ['tool', 'tools'], past: 'Used', present: 'Using' },
-  run: { noun: ['command', 'commands'], past: 'Ran', present: 'Running' }
+  research: { noun: ['research', 'research'], past: 'Researched', present: 'Researching' },
+  run: { noun: ['command', 'commands'], past: 'Ran', present: 'Running' },
+  web: { noun: ['web search', 'web searches'], past: 'Searched the web', present: 'Searching the web' }
 }
 
 const EXPLORE_TOOLS = new Set([
@@ -38,10 +40,13 @@ const EXPLORE_TOOLS = new Set([
   'read_file',
   'search_files',
   'session_search_recall',
-  'vision_analyze',
-  'web_extract',
-  'web_search'
+  'vision_analyze'
 ])
+
+// Web tools are their own category, not file exploration: a turn of web_search
+// + web_extract used to collapse into "Explored 3 files", which reads wrong for
+// work that never touched the filesystem (issue reported by Skappa 2026-09-10).
+const WEB_TOOLS = new Set(['web_extract', 'web_search'])
 
 function toolCategory(toolName: string): RunCategory {
   if (isFileEditTool(toolName)) {
@@ -54,6 +59,14 @@ function toolCategory(toolName: string): RunCategory {
 
   if (toolName === 'delegate_task') {
     return 'delegate'
+  }
+
+  if (toolName === 'web_research') {
+    return 'research'
+  }
+
+  if (WEB_TOOLS.has(toolName)) {
+    return 'web'
   }
 
   if (EXPLORE_TOOLS.has(toolName) || toolName.startsWith('browser_')) {

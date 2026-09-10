@@ -2901,6 +2901,11 @@ export const ar = defineLocale({
           pending: 'جار البحث في الويب',
           pendingAction: 'جار البحث'
         },
+        web_research: {
+          done: 'تمت دراسة الويب',
+          pending: 'جار البحث المتعمق',
+          pendingAction: 'جار البحث المتعمق'
+        },
         write_file: {
           done: 'تم تحرير الملف',
           pending: 'جار تحرير الملف',
