@@ -63,6 +63,7 @@ import {
   isFileEditTool,
   isMemoryLikeTool,
   isPreviewableTarget,
+  isWebTool,
   looksRedundant,
   type SearchResultRow,
   selectMessageRunning,
@@ -223,7 +224,8 @@ function ToolGlyph({
   filePath,
   icon,
   legendary,
-  status
+  status,
+  web
 }: {
   copy: ToolStatusCopy
   filePath?: string
@@ -231,21 +233,36 @@ function ToolGlyph({
   /** Landed memory write — keep the brain glyph, tint it gold→purple. */
   legendary?: boolean
   status?: ToolStatus
+  /** Landed web tool — tint the glyph cyan→blue with an aurora glow. */
+  web?: boolean
 }) {
+  const tintClass = legendary
+    ? 'text-(--tool-memory-legendary-icon)'
+    : web
+      ? 'text-(--tool-web-aurora-icon)'
+      : 'text-(--ui-text-tertiary)'
   const node = status ? (
     statusGlyph(status, copy)
   ) : filePath ? (
     <FileTypeIcon className="text-(--ui-text-tertiary)" path={filePath} size="0.875rem" />
   ) : icon ? (
     <ToolIcon
-      className={legendary ? 'text-(--tool-memory-legendary-icon)' : 'text-(--ui-text-tertiary)'}
+      className={tintClass}
       name={icon}
       size="0.875rem"
     />
   ) : null
 
   return node ? (
-    <span className={cn(TOOL_HEADER_GLYPH_WRAP_CLASS, legendary && 'tool-memory-legendary-glyph')}>{node}</span>
+    <span
+      className={cn(
+        TOOL_HEADER_GLYPH_WRAP_CLASS,
+        legendary && 'tool-memory-legendary-glyph',
+        web && 'tool-web-aurora-glyph'
+      )}
+    >
+      {node}
+    </span>
   ) : null
 }
 
@@ -295,13 +312,16 @@ function ToolTitle({
   legendary,
   status,
   title,
-  titleAction
+  titleAction,
+  web
 }: {
   isPending: boolean
   legendary?: boolean
   status: ToolStatus
   title: string
   titleAction?: ToolTitleAction
+  /** Landed web tool — cyan→blue aurora gradient on the title text. */
+  web?: boolean
 }) {
   return (
     <FadeText
@@ -310,7 +330,8 @@ function ToolTitle({
         isPending && 'text-(--conversation-scaffold-meta)',
         status === 'error' && 'text-destructive',
         status === 'warning' && 'text-amber-700 dark:text-amber-300',
-        legendary && !isPending && 'tool-memory-legendary-title text-transparent'
+        legendary && !isPending && 'tool-memory-legendary-title text-transparent',
+        web && !isPending && 'tool-web-aurora-title text-transparent'
       )}
     >
       {isPending && titleAction ? (
@@ -490,6 +511,11 @@ function ToolEntry({ part }: ToolEntryProps) {
   const memoryLegendary = !isPending && (part.toolName === 'memory' || isMemoryLikeTool(part.toolName)) && view.status === 'success'
   const memoryMetaClass = memoryLegendary ? 'tool-memory-legendary-meta' : undefined
 
+  // Landed web tools (web_search / web_extract / web_research) get the cyan→blue
+  // aurora chrome — their own family identity (Skappa 2026-09-10).
+  const webAurora = !isPending && !memoryLegendary && isWebTool(part.toolName) && view.status === 'success'
+  const webMetaClass = webAurora ? 'tool-web-aurora-meta' : undefined
+
   // The header trailing slot only carries the live duration timer while the
   // tool is running. The copy control used to live here too, but an
   // `opacity-0` (yet still clickable) button straddling the caret/duration made
@@ -572,6 +598,7 @@ function ToolEntry({ part }: ToolEntryProps) {
               icon={view.icon}
               legendary={memoryLegendary}
               status={leadingStatus(isPending, view.status)}
+              web={webAurora}
             />
             <ToolTitle
               isPending={isPending}
@@ -579,9 +606,10 @@ function ToolEntry({ part }: ToolEntryProps) {
               status={view.status}
               title={view.title}
               titleAction={view.titleAction}
+              web={webAurora}
             />
             {!isPending && view.countLabel && (
-              <span className={cn(SCAFFOLD_META_CLASS, memoryMetaClass)}>{view.countLabel}</span>
+              <span className={cn(SCAFFOLD_META_CLASS, memoryMetaClass, webMetaClass)}>{view.countLabel}</span>
             )}
             {showDiffStats && diffStats && (
               <span className="flex shrink-0 items-center gap-1 font-mono text-[0.625rem] tabular-nums">
@@ -594,7 +622,7 @@ function ToolEntry({ part }: ToolEntryProps) {
               </span>
             )}
             {!isFileEdit && !isPending && view.durationLabel && (
-              <span className={cn(SCAFFOLD_META_CLASS, memoryMetaClass)}>{view.durationLabel}</span>
+              <span className={cn(SCAFFOLD_META_CLASS, memoryMetaClass, webMetaClass)}>{view.durationLabel}</span>
             )}
           </span>
         </DisclosureRow>

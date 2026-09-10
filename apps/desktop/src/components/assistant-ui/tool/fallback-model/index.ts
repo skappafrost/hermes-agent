@@ -51,6 +51,15 @@ export function isMemoryLikeTool(toolName: string): boolean {
   return MEMORY_LIKE_TOOLS.has(toolName)
 }
 
+const WEB_TOOL_NAMES = new Set(['web_search', 'web_extract', 'web_research'])
+
+/** Web tools' landed-success chrome: cyan→blue aurora title + glyph glow —
+ *  the web family's own identity (Skappa 2026-09-10), parallel to the memory
+ *  legendary gold→purple. */
+export function isWebTool(toolName: string): boolean {
+  return WEB_TOOL_NAMES.has(toolName)
+}
+
 export interface DiffLineStats {
   added: number
   removed: number
