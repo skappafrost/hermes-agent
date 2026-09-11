@@ -1,0 +1,5 @@
+name: unified_memory
+version: 0.1.0
+description: "Unified memory provider — aggregates the Obsidian Vault (long-term knowledge) and AgentMemory (working/session memory) behind a single MemoryProvider interface with merged recall, conflict-aware writes, and deterministic result merging."
+kind: exclusive
+requires_env: []

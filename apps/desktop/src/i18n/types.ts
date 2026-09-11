@@ -29,8 +29,13 @@ export type ToolTitleKey =
   | 'session_search_recall'
   | 'terminal'
   | 'todo'
+  | 'vault_append_note'
+  | 'vault_create_note'
+  | 'vault_delete_note'
+  | 'vault_update_note'
   | 'vision_analyze'
   | 'web_extract'
+  | 'web_research'
   | 'web_search'
   | 'write_file'
 

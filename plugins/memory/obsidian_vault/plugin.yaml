@@ -1,0 +1,16 @@
+name: obsidian_vault
+version: 1.0.0
+description: "Obsidian Vault memory — Markdown-based long-term knowledge storage with YAML frontmatter indexing, full-text search, and context-aware retrieval."
+kind: exclusive
+# Core dependencies for the dense-embedding / semantic-search path
+# (EmbeddingPipeline + default FAISS VectorStore backend). Without these the
+# provider degrades gracefully to keyword/FTS5 search only. Bounds follow the
+# project dependency-pinning policy (>=floor,<next_major).
+pip_dependencies:
+  - "sentence-transformers>=5.7.0,<6"
+  - "torch>=2.13.0,<3"
+  - "faiss-cpu>=1.15.0,<2"
+requires_env: []
+hooks:
+  - on_session_end
+  - on_session_switch

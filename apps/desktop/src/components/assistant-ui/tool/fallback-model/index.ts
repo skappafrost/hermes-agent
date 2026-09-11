@@ -38,6 +38,28 @@ export * from './types'
 // pulling this module's formatting/i18n weight into the cost path.
 export { isCardTool, isFileEditTool, isSilentTool }
 
+const MEMORY_LIKE_TOOLS = new Set([
+  'memory',
+  'vault_create_note',
+  'vault_update_note',
+  'vault_append_note',
+])
+
+/** Tools whose successful writes should receive the same gold→purple
+ *  "memory legendary" chrome as the built-in memory tool. */
+export function isMemoryLikeTool(toolName: string): boolean {
+  return MEMORY_LIKE_TOOLS.has(toolName)
+}
+
+const WEB_TOOL_NAMES = new Set(['web_search', 'web_extract', 'web_research'])
+
+/** Web tools' landed-success chrome: cyan→blue aurora title + glyph glow —
+ *  the web family's own identity (Skappa 2026-09-10), parallel to the memory
+ *  legendary gold→purple. */
+export function isWebTool(toolName: string): boolean {
+  return WEB_TOOL_NAMES.has(toolName)
+}
+
 export interface DiffLineStats {
   added: number
   removed: number
@@ -205,11 +227,16 @@ const TOOL_META: Record<ToolTitleKey, ToolMetaSpec> = {
     tone: 'terminal'
   },
   todo: { icon: 'tools', tone: 'agent' },
+  vault_create_note: { icon: 'brain', tone: 'agent' },
+  vault_update_note: { icon: 'brain', tone: 'agent' },
+  vault_append_note: { icon: 'brain', tone: 'agent' },
+  vault_delete_note: { icon: 'brain', tone: 'agent' },
   vision_analyze: {
     icon: 'eye',
     tone: 'image'
   },
   web_extract: { icon: 'globe', tone: 'web' },
+  web_research: { icon: 'search', tone: 'web' },
   web_search: { icon: 'search', tone: 'web' },
   write_file: { icon: 'edit', tone: 'file' }
 }

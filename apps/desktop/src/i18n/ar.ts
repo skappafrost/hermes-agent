@@ -3005,6 +3005,10 @@ export const ar = defineLocale({
           pending: 'جار تحديث المهام',
           pendingAction: 'جار التحديث'
         },
+        vault_append_note: { done: 'تم الحفظ في الخزنة', pending: 'جار الحفظ في الخزنة', pendingAction: 'جار الحفظ' },
+        vault_create_note: { done: 'تم الحفظ في الخزنة', pending: 'جار الحفظ في الخزنة', pendingAction: 'جار الحفظ' },
+        vault_delete_note: { done: 'تم حذف ملاحظة الخزنة', pending: 'جار حذف ملاحظة الخزنة', pendingAction: 'جار الحذف' },
+        vault_update_note: { done: 'تم تحديث ملاحظة الخزنة', pending: 'جار تحديث ملاحظة الخزنة', pendingAction: 'جار التحديث' },
         vision_analyze: {
           done: 'تم تحليل الصورة',
           pending: 'جار تحليل الصورة',
@@ -3019,6 +3023,11 @@ export const ar = defineLocale({
           done: 'تم البحث في الويب',
           pending: 'جار البحث في الويب',
           pendingAction: 'جار البحث'
+        },
+        web_research: {
+          done: 'تمت دراسة الويب',
+          pending: 'جار البحث المتعمق',
+          pendingAction: 'جار البحث المتعمق'
         },
         write_file: {
           done: 'تم تحرير الملف',

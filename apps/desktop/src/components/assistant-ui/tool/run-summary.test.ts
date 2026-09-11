@@ -8,6 +8,9 @@ function tool(toolName: string, args: Record<string, unknown> = {}, result?: unk
 
 const read = (path: string) => tool('read_file', { path }, { content: '' })
 const searched = (query: string) => tool('search_files', { query }, { hits: [] })
+const webSearched = (query: string) => tool('web_search', { query }, { web: [] })
+const webRead = (url: string) => tool('web_extract', { urls: [url] }, { results: [] })
+const researched = (query: string) => tool('web_research', { query }, { sources: [] })
 const ran = (command: string) => tool('terminal', { command }, { exit_code: 0 })
 
 const settled = (tools: ToolCallLike[]) => summarizeToolRun(tools, false)
@@ -56,5 +59,29 @@ describe('summarizeToolRun', () => {
   // or it narrates work that stopped happening and never offers its toggle.
   it('reads a run the turn left unresolved as finished', () => {
     expect(settled([read('a.ts'), tool('search_files', { query: 'toolRuns' })])).toBe('Explored 2 files')
+  })
+
+  // Web tools are not file exploration (Skappa 2026-09-10): a turn of web
+  // searches used to summarize as "Explored N files" — wrong noun for work
+  // that never touched the filesystem. They get their own clause, and
+  // web_research reads as research, not search.
+  it('summarizes web tools as web searches, not file exploration', () => {
+    expect(settled([webSearched('wal'), webSearched('wal2'), webRead('https://x.dev')])).toBe(
+      'Searched the web 3 web searches'
+    )
+  })
+
+  it('keeps web and file clauses apart in one run', () => {
+    expect(settled([read('a.ts'), webSearched('q'), ran('ls')])).toBe(
+      'Explored a.ts, searched the web q, ran 1 command'
+    )
+  })
+
+  it('narrates a live web research call as Researching', () => {
+    expect(running([tool('web_research', { query: 'x vs y' })])).toBe('Researching x vs y')
+  })
+
+  it('settles a web research run in past tense', () => {
+    expect(settled([researched('x vs y')])).toBe('Researched x vs y')
   })
 })

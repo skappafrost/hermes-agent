@@ -229,6 +229,14 @@
     --tool-memory-legendary-icon: color-mix(in srgb, var(--ui-yellow) 55%, var(--ui-purple));
     --tool-memory-legendary-meta: color-mix(in srgb, var(--ui-purple) 58%, var(--ui-text-tertiary));
     --tool-memory-legendary-glow: color-mix(in srgb, var(--ui-purple) 38%, transparent);
+    /* Landed web-tool row (web_search / web_extract / web_research) — cyan →
+       blue aurora, the web tools' own identity next to the memory gold→purple. */
+    --tool-web-aurora-from: color-mix(in srgb, var(--ui-cyan) 78%, #7ff3ff);
+    --tool-web-aurora-mid: color-mix(in srgb, var(--ui-blue) 62%, var(--ui-cyan));
+    --tool-web-aurora-to: color-mix(in srgb, var(--ui-blue) 70%, #a5c8ff);
+    --tool-web-aurora-icon: color-mix(in srgb, var(--ui-cyan) 62%, var(--ui-blue));
+    --tool-web-aurora-meta: color-mix(in srgb, var(--ui-blue) 55%, var(--ui-text-tertiary));
+    --tool-web-aurora-glow: color-mix(in srgb, var(--ui-cyan) 42%, transparent);
     /* Diff add/remove, derived from the semantic palette so every diff surface
        (tool cards, preview, review pane) tracks the theme's green/red. Only the
        foregrounds need a dark override — they mix toward the page instead of
@@ -1084,6 +1092,29 @@
 
 .tool-memory-legendary-meta {
   color: var(--tool-memory-legendary-meta);
+}
+
+/* Landed web-tool row (web_search / web_extract / web_research) — cyan → blue
+   aurora on the title + glyph glow. Same mechanics as the memory chrome above. */
+.tool-web-aurora-title {
+  background-image: linear-gradient(
+    105deg,
+    var(--tool-web-aurora-from) 0%,
+    var(--tool-web-aurora-mid) 48%,
+    var(--tool-web-aurora-to) 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent !important;
+  font-weight: 600;
+}
+
+.tool-web-aurora-glyph {
+  filter: drop-shadow(0 0 0.28rem var(--tool-web-aurora-glow));
+}
+
+.tool-web-aurora-meta {
+  color: var(--tool-web-aurora-meta);
 }
 
 /* Command-palette deep-link: briefly flash the targeted settings row. */
