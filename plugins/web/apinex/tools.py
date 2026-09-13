@@ -1,8 +1,8 @@
 """APInex web_research tool — multi-step research with cited sources.
 
-Calls ``POST /v1/tools/web/research`` (FREE tier, 12 RPM) on the same APInex key
-as the search/extract provider. Response: ``{"output": {"content", "content_type",
-"sources"}, "warnings", "usage"}``.
+Calls ``POST /v1/tools/web/research`` (FREE tier, per-key ~12 RPM, pooled
+across the configured keys) through the shared key pool. Response:
+``{"output": {"content", "content_type", "sources"}, "warnings", "usage"}``.
 
 Registered into the existing ``web`` toolset so every surface that already has
 ``web_search`` / ``web_extract`` gets ``web_research`` automatically.
@@ -22,10 +22,10 @@ _MAX_OUTPUT_CHARS = 30000  # keep one research answer within a sane context slic
 
 
 def _check_apinex_available() -> bool:
-    """Tool gate: APInex key present (same env as the web provider)."""
-    from agent.web_search_provider import get_provider_env
+    """Tool gate: at least one pool key present."""
+    from plugins.web.apinex import keypool as _pool
 
-    return bool(get_provider_env("APINEX_API_KEY"))
+    return _pool.pool_size() > 0
 
 
 async def _handle_web_research(args: dict, **kwargs) -> str:
@@ -37,6 +37,7 @@ async def _handle_web_research(args: dict, **kwargs) -> str:
     Returns JSON ``{"success": true, "content": ..., "sources": [...], "effort": ...}``
     or ``{"success": false, "error": ...}``.
     """
+    from plugins.web.apinex import keypool as _pool
     from plugins.web.apinex.provider import _apinex_post
 
     query = str(args.get("query") or "")
@@ -45,7 +46,7 @@ async def _handle_web_research(args: dict, **kwargs) -> str:
         effort = "lite"
 
     try:
-        body = await asyncio.to_thread(
+        body, key_no = await asyncio.to_thread(
             _apinex_post,
             "/tools/web/research",
             {"input": str(query), "research_effort": effort},
@@ -84,6 +85,7 @@ async def _handle_web_research(args: dict, **kwargs) -> str:
         "sources": slim_sources,
         "sources_count": len(slim_sources),
         "usage": body.get("usage") or {},
+        "apinex_key": _pool.fingerprint_of(key_no),
     }
     if truncated:
         payload["note"] = f"answer truncated at {_MAX_OUTPUT_CHARS} chars"
@@ -95,9 +97,10 @@ WEB_RESEARCH_SCHEMA = {
     "description": (
         "Run a multi-step web research question through APInex: it performs searches, reads pages, "
         "and returns a synthesized answer with numbered citations [[1]] [[2]] plus a sources list. "
-        "FREE tier (rate-limited ~12 calls/min). Use for open questions needing synthesis across "
-        "multiple sources ('what is the current state of X', 'compare A vs B for my use case'); "
-        "use web_search for simple lookups and web_extract to read a known URL."
+        "FREE tier (per-key ~12 calls/min, pooled across the configured APInex keys). Use for open "
+        "questions needing synthesis across multiple sources ('what is the current state of X', "
+        "'compare A vs B for my use case'); use web_search for simple lookups and web_extract to "
+        "read a known URL."
     ),
     "parameters": {
         "type": "object",

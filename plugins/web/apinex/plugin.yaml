@@ -1,6 +1,6 @@
 name: web-apinex
 version: 1.0.0
-description: "APInex web tools: search + extract (POST /v1/tools/web/*) with auto-fallback to exa/firecrawl, plus the web_research tool (multi-step research with citations). Requires APINEX_API_KEY from https://apinex.bond — free web tools tier."
+description: "APInex web tools: search + extract (POST /v1/tools/web/*) with round-robin key pool, backoff retry and Exa fallback, plus the web_research tool (multi-step research with citations). Requires APINEX_API_KEY (+ _2.._9 for pooling) from https://apinex.bond — free web tools tier."
 author: Skappa (custom)
 kind: backend
 provides_web_providers:

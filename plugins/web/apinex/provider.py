@@ -1,7 +1,7 @@
 """APInex web search + extract via the APInex tools API (https://api.apinex.bond).
 
-Env: ``APINEX_API_KEY`` (sk-apx..., from https://apinex.bond). Both methods are sync-first;
-``extract`` is async (delegates to Firecrawl's async extract on fallback).
+Env: ``APINEX_API_KEY`` + ``APINEX_API_KEY_2`` ... ``_9`` (round-robin pool,
+see ``keypool``). Both methods are sync-first; ``extract`` is async.
 
 Upstream endpoints (measured 2026-09-09):
     POST /v1/tools/web/search     {"query", "count" 1-100, "offset", "freshness", ...}
@@ -10,17 +10,24 @@ Response shapes:
     search   -> {"results": {"web": [{url, title, description, snippets, page_age, ...}]}, "usage"}
     contents -> {"results": [{url, markdown, html, title, metadata}], "usage"}
 
-Failure policy (Skappa, 2026-09-10): APInex is the primary backend; on any failure
-(network/timeout/5xx/4xx incl. auth) calls fall back to the previous combo —
-Exa for search, Firecrawl for extract — before giving up. Disable via
-``web.apinex_fallback: false``.
+Failure policy (Skappa, 2026-09-11; Docker uninstalled, no local stack):
+- Round-robin pool rotation per request; HTTP 429 -> next key immediately;
+  401/403 -> quarantine that key 10 min, next key. A full pool round of 429s
+  sleeps a short backoff (1,2,3,4,5s) and retries, up to 1 + 5 rounds, to
+  ride out the 60s rate-limit window instead of failing at once.
+- Network/timeout/5xx/other-4xx are not key problems -> immediate fallback.
+- Fallback is Exa only (keyed or keyless, the remaining built-in path).
+  Disable via ``web.apinex_fallback: false``.
+- Every APInex HTTP attempt is metered into the shared SQLite meter (tracker)
+  for the dashboard (per-key rolling usage vs the per-minute limits).
 """
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Dict, List, Optional
+import time
+from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 
@@ -36,6 +43,17 @@ _DEFAULT_BASE = "https://api.apinex.bond/v1"
 _SEARCH_TIMEOUT = 30.0
 _CONTENTS_TIMEOUT = 120.0
 _DESC_CAP = 1500  # keep per-hit description payloads lean
+
+# Pool-exhausted retry: 1 initial round + 5 backoff retries (Skappa 2026-09-11).
+# Sleeps sit between full-pool rounds; worst case adds ~15s to one call.
+_RETRY_ROUNDS = 6
+_RETRY_BACKOFF_S = (1.0, 2.0, 3.0, 4.0, 5.0)
+
+_ENDPOINT_BY_PATH = {
+    "/tools/web/search": "search",
+    "/tools/web/contents": "contents",
+    "/tools/web/research": "research",
+}
 
 
 def _base_url() -> str:
@@ -54,37 +72,103 @@ def _fallback_enabled() -> bool:
         return True
 
 
-def _apinex_post(path: str, payload: Dict[str, Any], timeout: float) -> Dict[str, Any]:
-    """POST JSON to an APInex tools endpoint; raises RuntimeError on any failure shape."""
-    api_key = provider_env("APINEX_API_KEY")
-    if not api_key:
+def _error_detail(resp: Any) -> str:
+    # APInex errors: {"error": {"message": ..., "type": ...}} — surface the message when present.
+    try:
+        err = (resp.json() or {}).get("error") or {}
+        return str(err.get("message") or "") if isinstance(err, dict) else str(err)
+    except Exception:  # noqa: BLE001 — body may not be JSON
+        return ""
+
+
+def _apinex_post(path: str, payload: Dict[str, Any], timeout: float) -> Tuple[Dict[str, Any], int]:
+    """POST JSON to an APInex tools endpoint through the key pool.
+
+    Returns ``(data, key_number)``. Raises :class:`ValueError` when no key is
+    configured (verbatim config error, no fallback) and :class:`RuntimeError`
+    for anything else (callers fall back to Exa).
+    """
+    from plugins.web.apinex import keypool as _pool
+    from plugins.web.apinex import tracker as _meter
+
+    endpoint = _ENDPOINT_BY_PATH.get(path, path.strip("/").replace("/", "_") or "?")
+    profile = _pool.profile_name()
+    pool_n = _pool.pool_size()
+    if pool_n == 0:
         raise ValueError(_MISSING_KEY)
-    try:
-        resp = httpx.post(
-            f"{_base_url()}{path}",
-            json=payload,
-            headers={"Authorization": f"Bearer {api_key}"},
-            timeout=timeout,
-        )
-    except httpx.RequestError as exc:
-        raise RuntimeError(f"could not reach APInex: {exc}") from exc
-    if resp.status_code >= 400:
-        # APInex errors: {"error": {"message": ..., "type": ...}} — surface the message when present.
-        detail = ""
-        try:
-            err = (resp.json() or {}).get("error") or {}
-            detail = str(err.get("message") or "") if isinstance(err, dict) else str(err)
-        except Exception:  # noqa: BLE001 — body may not be JSON
-            pass
-        raise RuntimeError(f"APInex returned HTTP {resp.status_code}{' — ' + detail[:200] if detail else ''}")
-    try:
-        return resp.json()
-    except Exception as exc:  # noqa: BLE001
-        raise RuntimeError(f"could not parse APInex response as JSON: {exc}") from exc
+
+    last_err = "unknown error"
+    for round_i in range(_RETRY_ROUNDS):
+        round_had_429 = False
+        for _ in range(max(_pool.pool_size(), 1)):
+            try:
+                key_no, api_key = _pool.next_key()
+            except _pool.NoKeysAvailable:
+                raise ValueError(_MISSING_KEY)
+            fp = _pool.key_fingerprint(api_key)
+            t0 = time.monotonic()
+            try:
+                resp = httpx.post(
+                    f"{_base_url()}{path}",
+                    json=payload,
+                    headers={"Authorization": f"Bearer {api_key}"},
+                    timeout=timeout,
+                )
+            except httpx.RequestError as exc:
+                _meter.log_request(profile=profile, key_no=key_no, key_fp=fp,
+                                   endpoint=endpoint, ok=False, status=None,
+                                   latency_ms=(time.monotonic() - t0) * 1000)
+                raise RuntimeError(f"could not reach APInex: {exc}") from exc
+            latency_ms = (time.monotonic() - t0) * 1000
+            remaining, reset = _meter.parse_limit_headers(resp.headers)
+            if resp.status_code < 400:
+                try:
+                    data = resp.json()
+                except Exception as exc:  # noqa: BLE001
+                    _meter.log_request(profile=profile, key_no=key_no, key_fp=fp,
+                                       endpoint=endpoint, ok=False, status=resp.status_code,
+                                       latency_ms=latency_ms)
+                    raise RuntimeError(f"could not parse APInex response as JSON: {exc}") from exc
+                _meter.log_request(profile=profile, key_no=key_no, key_fp=fp,
+                                   endpoint=endpoint, ok=True, status=resp.status_code,
+                                   latency_ms=latency_ms,
+                                   limit_remaining=remaining, limit_reset_s=reset)
+                return data, key_no
+            detail = _error_detail(resp)
+            last_err = f"APInex returned HTTP {resp.status_code}{' — ' + detail[:200] if detail else ''}"
+            if resp.status_code in (401, 403):
+                _pool.mark_bad(key_no, detail or last_err)
+                _meter.log_request(profile=profile, key_no=key_no, key_fp=fp,
+                                   endpoint=endpoint, ok=False, status=resp.status_code,
+                                   latency_ms=latency_ms)
+                continue  # next key, no sleep: this key is unusable, not limited
+            if resp.status_code == 429:
+                round_had_429 = True
+                _meter.log_request(profile=profile, key_no=key_no, key_fp=fp,
+                                   endpoint=endpoint, ok=False, status=429,
+                                   latency_ms=latency_ms,
+                                   limit_remaining=remaining, limit_reset_s=reset)
+                continue  # next key immediately; sleep only between rounds
+            _meter.log_request(profile=profile, key_no=key_no, key_fp=fp,
+                               endpoint=endpoint, ok=False, status=resp.status_code,
+                               latency_ms=latency_ms)
+            raise RuntimeError(last_err)  # not key-related -> fallback path now
+        # Full pool round done. Only 429-storms earn another round after a nap;
+        # anything else (all keys quarantined, ...) fails over immediately.
+        if round_had_429 and round_i < _RETRY_ROUNDS - 1:
+            nap = _RETRY_BACKOFF_S[min(round_i, len(_RETRY_BACKOFF_S) - 1)]
+            logger.warning(
+                "APInex rate-limited on all %d key(s); retry round %d/%d after %.0fs",
+                pool_n, round_i + 2, _RETRY_ROUNDS, nap,
+            )
+            time.sleep(nap)
+            continue
+        break
+    raise RuntimeError(f"{last_err} (pool of {pool_n} key(s) exhausted after {_RETRY_ROUNDS} rounds)")
 
 
 class ApinexWebSearchProvider(BaseWebSearchProvider):
-    """APInex search + extract provider with automatic fallback to the legacy combo."""
+    """APInex search + extract provider: key pool + retry, Exa fallback."""
 
     NAME = "apinex"
     DISPLAY_NAME = "APInex"
@@ -92,15 +176,23 @@ class ApinexWebSearchProvider(BaseWebSearchProvider):
     EXTRACT = True
     KEYLESS = False
 
+    def is_available(self) -> bool:
+        """Available when at least one pool key is configured."""
+        from plugins.web.apinex import keypool as _pool
+
+        return _pool.pool_size() > 0
+
     # ---- search ----------------------------------------------------------
 
     def search(self, query: str, limit: int = 5) -> Dict[str, Any]:
         return run_search("APInex", logger, lambda: self._search_body(query, limit))
 
     def _search_body(self, query: str, limit: int) -> Dict[str, Any]:
+        from plugins.web.apinex import keypool as _pool
+
         logger.info("APInex search: '%s' (limit=%d)", query, limit)
         try:
-            data = _apinex_post(
+            data, key_no = _apinex_post(
                 "/tools/web/search",
                 {"query": query, "count": max(1, min(int(limit), 100))},
                 _SEARCH_TIMEOUT,
@@ -123,10 +215,12 @@ class ApinexWebSearchProvider(BaseWebSearchProvider):
                 desc[:_DESC_CAP],
                 i + 1,
             ))
-        return search_ok(hits)
+        resp = search_ok(hits)
+        resp["data"]["apinex_key"] = _pool.fingerprint_of(key_no)
+        return resp
 
     def _fallback_search(self, query: str, limit: int, apinex_error: str) -> Dict[str, Any]:
-        """Serve this call via the Exa provider (keyed or keyless, same as pre-APInex setup)."""
+        """Serve this call via the Exa provider (keyed or keyless) — the built-in fallback."""
         if not _fallback_enabled():
             return search_fail(f"APInex search failed: {apinex_error}")
         logger.warning(
@@ -151,6 +245,7 @@ class ApinexWebSearchProvider(BaseWebSearchProvider):
     # ---- extract ---------------------------------------------------------
 
     async def extract(self, urls: List[str], **kwargs: Any) -> List[Dict[str, Any]]:
+        from plugins.web.apinex import keypool as _pool
         from tools.interrupt import is_interrupted
 
         if is_interrupted():
@@ -159,7 +254,7 @@ class ApinexWebSearchProvider(BaseWebSearchProvider):
         formats = [format] if format in ("markdown", "html") else ["markdown"]
         logger.info("APInex extract: %d URL(s)", len(urls))
         try:
-            body = await asyncio.to_thread(
+            body, key_no = await asyncio.to_thread(
                 _apinex_post,
                 "/tools/web/contents",
                 {"urls": list(urls), "formats": formats},
@@ -170,15 +265,18 @@ class ApinexWebSearchProvider(BaseWebSearchProvider):
         except Exception as exc:
             return await self._fallback_extract(urls, format, str(exc))
 
+        fp = _pool.fingerprint_of(key_no)
         results_raw = body.get("results") or []
         by_url: Dict[str, Dict[str, Any]] = {}
         for r in results_raw:
             if not isinstance(r, dict):
                 continue
             content = str(r.get("markdown") or r.get("html") or "")
-            by_url[str(r.get("url") or "")] = document(
-                str(r.get("url") or ""), str(r.get("title") or ""), content,
-            )
+            entry = document(str(r.get("url") or ""), str(r.get("title") or ""), content)
+            meta = entry.setdefault("metadata", {})
+            if isinstance(meta, dict):
+                meta["apinex_key"] = fp
+            by_url[str(r.get("url") or "")] = entry
         results = []
         for u in urls:
             entry = by_url.get(u)
@@ -187,15 +285,15 @@ class ApinexWebSearchProvider(BaseWebSearchProvider):
             else:
                 results.append(entry)
 
-        # Whole-batch failure = outage, not per-page problems → try Firecrawl.
+        # Whole-batch failure = outage, not per-page problems → try Exa.
         if results and all(r.get("error") for r in results):
-            logger.warning("APInex extract failed all %d URL(s); falling back to Firecrawl", len(urls))
+            logger.warning("APInex extract failed all %d URL(s); falling back to Exa", len(urls))
             return await self._fallback_extract(urls, format, "all URLs failed")
 
-        # Patch partial failures per-URL via Firecrawl (best-effort, keeps successes).
+        # Patch partial failures per-URL via Exa (best-effort, keeps successes).
         failed_idx = [i for i, r in enumerate(results) if r.get("error")]
         if failed_idx and _fallback_enabled():
-            rescued = await self._fc_extract([urls[i] for i in failed_idx], format)
+            rescued = await self._exa_extract([urls[i] for i in failed_idx], format)
             if rescued and not all(r.get("error") for r in rescued):
                 for pos, i in enumerate(failed_idx):
                     if not rescued[pos].get("error"):
@@ -213,43 +311,31 @@ class ApinexWebSearchProvider(BaseWebSearchProvider):
 
             return extract_fail(urls, f"APInex extract failed: {apinex_error}")
         logger.warning(
-            "APInex extract failed (%s); falling back to Firecrawl for this call",
+            "APInex extract failed (%s); falling back to Exa for this call",
             apinex_error[:200],
         )
-        rescued = await self._fc_extract(urls, format)
+        rescued = await self._exa_extract(urls, format)
         for r in rescued:
             if not r.get("error"):
                 meta = r.setdefault("metadata", {})
                 if isinstance(meta, dict):
                     meta["fallback_from"] = "apinex"
                     meta["backend_error"] = (
-                        f"APInex failed this call ({apinex_error[:300]}); served by the Firecrawl fallback."
+                        f"APInex failed this call ({apinex_error[:300]}); served by the Exa fallback."
                     )
         return rescued
 
     @staticmethod
-    async def _fc_extract(urls: List[str], format: Optional[str]) -> List[Dict[str, Any]]:
-        from plugins.web._common import extract_fail, provider_env as _penv
+    async def _exa_extract(urls: List[str], format: Optional[str]) -> List[Dict[str, Any]]:
+        from plugins.web._common import extract_fail
 
-        # Docker rescue: when Firecrawl local is the target and it is down,
-        # bring the stack up (Docker Desktop → compose) before delegating.
-        api_url = (_penv("FIRECRAWL_API_URL") or "").strip()
-        if "localhost" in api_url or "127.0.0.1" in api_url:
-            from plugins.web.apinex.docker_rescue import ensure_firecrawl_local
-
-            healthy = await asyncio.to_thread(ensure_firecrawl_local)
-            if not healthy:
-                return extract_fail(
-                    urls,
-                    "Firecrawl local is down and the Docker rescue could not bring it up "
-                    "(see web.apinex_docker_rescue; check Docker Desktop / the firecrawl stack)",
-                )
         try:
-            from plugins.web.firecrawl.provider import FirecrawlWebSearchProvider
+            from plugins.web.exa.provider import ExaWebSearchProvider
 
-            return await FirecrawlWebSearchProvider().extract(urls, format=format)
+            # Exa's extract is sync — thread it so the event loop never blocks.
+            return await asyncio.to_thread(ExaWebSearchProvider().extract, urls, format=format)
         except Exception as exc:  # noqa: BLE001 — fallback is best-effort
-            return extract_fail(urls, f"Firecrawl fallback failed: {exc}")
+            return extract_fail(urls, f"Exa fallback failed: {exc}")
 
     # ---- picker ---------------------------------------------------------
 
@@ -257,7 +343,7 @@ class ApinexWebSearchProvider(BaseWebSearchProvider):
         return setup_schema(
             "APInex", "api-key",
             "Web search + clean page extraction via APInex tools API (fast; renders SPAs; free web-tools tier). "
-            "Automatic fallback to Exa/Firecrawl on failure.",
+            "Round-robin key pool with retry; automatic fallback to Exa on failure.",
             "APINEX_API_KEY", "APInex API key (sk-apx...)", "https://apinex.bond",
             web_tier="paid",
         )

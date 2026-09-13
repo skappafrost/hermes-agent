@@ -1,9 +1,9 @@
 """APInex web tools plugin — bundled, auto-loaded.
 
-- Web search/extract provider (falls back to exa/firecrawl on failure, per
-  Skappa 2026-09-10).
+- Web search/extract provider: round-robin key pool + backoff retry, Exa
+  fallback (Skappa 2026-09-11; Docker uninstalled, no local stack).
 - ``web_research`` tool: multi-step research with cited sources via APInex's
-  free research endpoint (Skappa 2026-09-10).
+  free research endpoint.
 """
 from __future__ import annotations
 from plugins.web.apinex.provider import ApinexWebSearchProvider
