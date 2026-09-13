@@ -62,10 +62,22 @@ def _connect() -> Optional[sqlite3.Connection]:
                 status INTEGER,
                 latency_ms REAL,
                 limit_remaining INTEGER,
-                limit_reset_s INTEGER
+                limit_reset_s INTEGER,
+                req_summary TEXT,
+                resp_bytes INTEGER,
+                result_count INTEGER
             )"""
         )
         con.execute("CREATE INDEX IF NOT EXISTS idx_requests_ts ON requests(ts)")
+        # Migrate pre-existing DBs (blind ALTER would error on fresh ones, hence the check).
+        try:
+            have = {r[1] for r in con.execute("PRAGMA table_info(requests)").fetchall()}
+            for _col, _ddl in (("req_summary", "TEXT"), ("resp_bytes", "INTEGER"),
+                               ("result_count", "INTEGER")):
+                if _col not in have:
+                    con.execute(f"ALTER TABLE requests ADD COLUMN {_col} {_ddl}")
+        except Exception:
+            pass
         con.execute(
             """CREATE TABLE IF NOT EXISTS hourly(
                 hour INTEGER NOT NULL,
@@ -116,6 +128,9 @@ def log_request(
     latency_ms: float,
     limit_remaining: Optional[int] = None,
     limit_reset_s: Optional[int] = None,
+    req_summary: Optional[str] = None,
+    resp_bytes: Optional[int] = None,
+    result_count: Optional[int] = None,
 ) -> None:
     """Append one meter row + bump the hourly rollup. Never raises."""
     con = _connect()
@@ -126,10 +141,13 @@ def log_request(
         with con:
             con.execute(
                 "INSERT INTO requests(ts, profile, key_no, key_fp, endpoint, ok, status,"
-                " latency_ms, limit_remaining, limit_reset_s)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?)",
+                " latency_ms, limit_remaining, limit_reset_s,"
+                " req_summary, resp_bytes, result_count)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (now, profile, key_no, key_fp, endpoint, 1 if ok else 0,
-                 status, latency_ms, limit_remaining, limit_reset_s),
+                 status, latency_ms, limit_remaining, limit_reset_s,
+                 (req_summary or "")[:400] if req_summary else None,
+                 resp_bytes, result_count),
             )
             hour = int(now // 3600) * 3600
             con.execute(

@@ -25,6 +25,7 @@ Failure policy (Skappa, 2026-09-11; Docker uninstalled, no local stack):
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time
 from typing import Any, Dict, List, Optional, Tuple
@@ -81,6 +82,41 @@ def _error_detail(resp: Any) -> str:
         return ""
 
 
+def _summarize_request(path: str, payload: Dict[str, Any]) -> str:
+    """One-line human summary of what was asked (stored in the meter)."""
+    try:
+        if path == "/tools/web/search":
+            return f"q={str(payload.get('query') or '')[:200]} n={payload.get('count')}"
+        if path == "/tools/web/contents":
+            urls = payload.get("urls") or []
+            first = str(urls[0])[:150] if urls else "-"
+            return f"{len(urls)} url(s): {first}"
+        if path == "/tools/web/research":
+            return f"[{payload.get('research_effort')}] {str(payload.get('input') or '')[:200]}"
+    except Exception:  # noqa: BLE001
+        pass
+    return str(path)
+
+
+def _summarize_response(path: str, data: Dict[str, Any]) -> Tuple[Optional[int], int]:
+    """``(result_count, resp_bytes)`` for the meter."""
+    try:
+        raw = json.dumps(data, ensure_ascii=False, default=str)
+    except Exception:  # noqa: BLE001
+        raw = ""
+    count: Optional[int] = None
+    try:
+        if path == "/tools/web/search":
+            count = len(((data.get("results") or {}).get("web")) or [])
+        elif path == "/tools/web/contents":
+            count = len(data.get("results") or [])
+        elif path == "/tools/web/research":
+            count = len((data.get("output") or {}).get("sources") or [])
+    except Exception:  # noqa: BLE001
+        count = None
+    return count, len(raw)
+
+
 def _apinex_post(path: str, payload: Dict[str, Any], timeout: float) -> Tuple[Dict[str, Any], int]:
     """POST JSON to an APInex tools endpoint through the key pool.
 
@@ -98,6 +134,7 @@ def _apinex_post(path: str, payload: Dict[str, Any], timeout: float) -> Tuple[Di
         raise ValueError(_MISSING_KEY)
 
     last_err = "unknown error"
+    summary = _summarize_request(path, payload)
     for round_i in range(_RETRY_ROUNDS):
         round_had_429 = False
         for _ in range(max(_pool.pool_size(), 1)):
@@ -117,7 +154,8 @@ def _apinex_post(path: str, payload: Dict[str, Any], timeout: float) -> Tuple[Di
             except httpx.RequestError as exc:
                 _meter.log_request(profile=profile, key_no=key_no, key_fp=fp,
                                    endpoint=endpoint, ok=False, status=None,
-                                   latency_ms=(time.monotonic() - t0) * 1000)
+                                   latency_ms=(time.monotonic() - t0) * 1000,
+                                   req_summary=summary)
                 raise RuntimeError(f"could not reach APInex: {exc}") from exc
             latency_ms = (time.monotonic() - t0) * 1000
             remaining, reset = _meter.parse_limit_headers(resp.headers)
@@ -129,10 +167,13 @@ def _apinex_post(path: str, payload: Dict[str, Any], timeout: float) -> Tuple[Di
                                        endpoint=endpoint, ok=False, status=resp.status_code,
                                        latency_ms=latency_ms)
                     raise RuntimeError(f"could not parse APInex response as JSON: {exc}") from exc
+                rcount, rbytes = _summarize_response(path, data)
                 _meter.log_request(profile=profile, key_no=key_no, key_fp=fp,
                                    endpoint=endpoint, ok=True, status=resp.status_code,
                                    latency_ms=latency_ms,
-                                   limit_remaining=remaining, limit_reset_s=reset)
+                                   limit_remaining=remaining, limit_reset_s=reset,
+                                   req_summary=summary,
+                                   resp_bytes=rbytes, result_count=rcount)
                 return data, key_no
             detail = _error_detail(resp)
             last_err = f"APInex returned HTTP {resp.status_code}{' — ' + detail[:200] if detail else ''}"
@@ -140,18 +181,21 @@ def _apinex_post(path: str, payload: Dict[str, Any], timeout: float) -> Tuple[Di
                 _pool.mark_bad(key_no, detail or last_err)
                 _meter.log_request(profile=profile, key_no=key_no, key_fp=fp,
                                    endpoint=endpoint, ok=False, status=resp.status_code,
-                                   latency_ms=latency_ms)
+                                   latency_ms=latency_ms,
+                                   req_summary=summary)
                 continue  # next key, no sleep: this key is unusable, not limited
             if resp.status_code == 429:
                 round_had_429 = True
                 _meter.log_request(profile=profile, key_no=key_no, key_fp=fp,
                                    endpoint=endpoint, ok=False, status=429,
                                    latency_ms=latency_ms,
-                                   limit_remaining=remaining, limit_reset_s=reset)
+                                   limit_remaining=remaining, limit_reset_s=reset,
+                                   req_summary=summary)
                 continue  # next key immediately; sleep only between rounds
             _meter.log_request(profile=profile, key_no=key_no, key_fp=fp,
                                endpoint=endpoint, ok=False, status=resp.status_code,
-                               latency_ms=latency_ms)
+                               latency_ms=latency_ms,
+                               req_summary=summary)
             raise RuntimeError(last_err)  # not key-related -> fallback path now
         # Full pool round done. Only 429-storms earn another round after a nap;
         # anything else (all keys quarantined, ...) fails over immediately.
