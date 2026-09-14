@@ -123,12 +123,14 @@ def _summarize_response(path: str, data: Dict[str, Any]) -> Tuple[Optional[int],
     return count, len(raw)
 
 
-def _apinex_post(path: str, payload: Dict[str, Any], timeout: float) -> Tuple[Dict[str, Any], int]:
+def _apinex_post(path: str, payload: Dict[str, Any], timeout: float,
+                 call_id: Optional[int] = None) -> Tuple[Dict[str, Any], int]:
     """POST JSON to an APInex tools endpoint through the key pool.
 
     Returns ``(data, key_number)``. Raises :class:`ValueError` when no key is
     configured (verbatim config error, no fallback) and :class:`RuntimeError`
-    for anything else (callers fall back to Exa).
+    for anything else (callers fall back to Exa). ``call_id`` ties every
+    attempt of one logical call together for the meter dashboard.
     """
     from plugins.web.apinex import keypool as _pool
     from plugins.web.apinex import tracker as _meter
@@ -161,7 +163,7 @@ def _apinex_post(path: str, payload: Dict[str, Any], timeout: float) -> Tuple[Di
                 _meter.log_request(profile=profile, key_no=key_no, key_fp=fp,
                                    endpoint=endpoint, ok=False, status=None,
                                    latency_ms=(time.monotonic() - t0) * 1000,
-                                   req_summary=summary)
+                                   req_summary=summary, call_id=call_id)
                 raise RuntimeError(f"could not reach APInex: {exc}") from exc
             latency_ms = (time.monotonic() - t0) * 1000
             remaining, reset = _meter.parse_limit_headers(resp.headers)
@@ -171,7 +173,7 @@ def _apinex_post(path: str, payload: Dict[str, Any], timeout: float) -> Tuple[Di
                 except Exception as exc:  # noqa: BLE001
                     _meter.log_request(profile=profile, key_no=key_no, key_fp=fp,
                                        endpoint=endpoint, ok=False, status=resp.status_code,
-                                       latency_ms=latency_ms)
+                                       latency_ms=latency_ms, call_id=call_id)
                     raise RuntimeError(f"could not parse APInex response as JSON: {exc}") from exc
                 rcount, rbytes = _summarize_response(path, data)
                 _meter.log_request(profile=profile, key_no=key_no, key_fp=fp,
@@ -179,7 +181,7 @@ def _apinex_post(path: str, payload: Dict[str, Any], timeout: float) -> Tuple[Di
                                    latency_ms=latency_ms,
                                    limit_remaining=remaining, limit_reset_s=reset,
                                    req_summary=summary,
-                                   resp_bytes=rbytes, result_count=rcount)
+                                   resp_bytes=rbytes, result_count=rcount, call_id=call_id)
                 return data, key_no
             detail = _error_detail(resp)
             last_err = f"APInex returned HTTP {resp.status_code}{' — ' + detail[:200] if detail else ''}"
@@ -188,7 +190,7 @@ def _apinex_post(path: str, payload: Dict[str, Any], timeout: float) -> Tuple[Di
                 _meter.log_request(profile=profile, key_no=key_no, key_fp=fp,
                                    endpoint=endpoint, ok=False, status=resp.status_code,
                                    latency_ms=latency_ms,
-                                   req_summary=summary)
+                                   req_summary=summary, call_id=call_id)
                 continue  # next key, no sleep: this key is unusable, not limited
             if resp.status_code == 429:
                 round_had_429 = True
@@ -196,12 +198,12 @@ def _apinex_post(path: str, payload: Dict[str, Any], timeout: float) -> Tuple[Di
                                    endpoint=endpoint, ok=False, status=429,
                                    latency_ms=latency_ms,
                                    limit_remaining=remaining, limit_reset_s=reset,
-                                   req_summary=summary)
+                                   req_summary=summary, call_id=call_id)
                 continue  # next key immediately; sleep only between rounds
             _meter.log_request(profile=profile, key_no=key_no, key_fp=fp,
                                endpoint=endpoint, ok=False, status=resp.status_code,
                                latency_ms=latency_ms,
-                               req_summary=summary)
+                               req_summary=summary, call_id=call_id)
             raise RuntimeError(last_err)  # not key-related -> fallback path now
         # Full pool round done. Only 429-storms earn another round after a nap;
         # anything else (all keys quarantined, ...) fails over immediately.
@@ -239,18 +241,21 @@ class ApinexWebSearchProvider(BaseWebSearchProvider):
 
     def _search_body(self, query: str, limit: int) -> Dict[str, Any]:
         from plugins.web.apinex import keypool as _pool
+        from plugins.web.apinex import tracker as _meter
 
         logger.info("APInex search: '%s' (limit=%d)", query, limit)
+        call_id = _meter.new_call_id()
         try:
             data, key_no = _apinex_post(
                 "/tools/web/search",
                 {"query": query, "count": max(1, min(int(limit), 100))},
                 _SEARCH_TIMEOUT,
+                call_id=call_id,
             )
         except ValueError:
             raise  # missing key: verbatim, no fallback (config error, not outage)
         except Exception as exc:
-            return self._fallback_search(query, limit, str(exc))
+            return self._fallback_search(query, limit, str(exc), call_id)
 
         hits_raw = ((data.get("results") or {}).get("web")) or []
         hits = []
@@ -269,7 +274,8 @@ class ApinexWebSearchProvider(BaseWebSearchProvider):
         resp["data"]["apinex_key"] = _pool.fingerprint_of(key_no)
         return resp
 
-    def _fallback_search(self, query: str, limit: int, apinex_error: str) -> Dict[str, Any]:
+    def _fallback_search(self, query: str, limit: int, apinex_error: str,
+                         call_id: Optional[int] = None) -> Dict[str, Any]:
         """Serve this call via the Exa provider (keyed or keyless) — the built-in fallback."""
         from plugins.web.apinex import tracker as _meter
         summary = f"q={query[:200]} n={limit}"
@@ -288,7 +294,7 @@ class ApinexWebSearchProvider(BaseWebSearchProvider):
             _meter.log_request(profile=_meter_fallback_profile(), key_no=0,
                                key_fp="exa", endpoint="search", ok=False, status=None,
                                latency_ms=(time.monotonic() - t0) * 1000,
-                               req_summary=summary, route="fallback")
+                               req_summary=summary, route="fallback", call_id=call_id)
             return search_fail(
                 f"APInex search failed: {apinex_error} (Exa fallback also failed: {exc})"
             )
@@ -300,7 +306,7 @@ class ApinexWebSearchProvider(BaseWebSearchProvider):
                            latency_ms=(time.monotonic() - t0) * 1000,
                            req_summary=summary,
                            resp_bytes=len(json.dumps(resp or {}, default=str)),
-                           result_count=len(hits), route="fallback")
+                           result_count=len(hits), route="fallback", call_id=call_id)
         if ok:
             resp.setdefault("data", {}).setdefault("fallback_from", "apinex")
             resp["data"]["backend_error"] = (
@@ -312,6 +318,7 @@ class ApinexWebSearchProvider(BaseWebSearchProvider):
 
     async def extract(self, urls: List[str], **kwargs: Any) -> List[Dict[str, Any]]:
         from plugins.web.apinex import keypool as _pool
+        from plugins.web.apinex import tracker as _meter
         from tools.interrupt import is_interrupted
 
         if is_interrupted():
@@ -319,17 +326,19 @@ class ApinexWebSearchProvider(BaseWebSearchProvider):
         format = kwargs.get("format")
         formats = [format] if format in ("markdown", "html") else ["markdown"]
         logger.info("APInex extract: %d URL(s)", len(urls))
+        call_id = _meter.new_call_id()
         try:
             body, key_no = await asyncio.to_thread(
                 _apinex_post,
                 "/tools/web/contents",
                 {"urls": list(urls), "formats": formats},
                 _CONTENTS_TIMEOUT,
+                call_id,
             )
         except ValueError:
             raise  # missing key: verbatim, no fallback
         except Exception as exc:
-            return await self._fallback_extract(urls, format, str(exc))
+            return await self._fallback_extract(urls, format, str(exc), call_id)
 
         fp = _pool.fingerprint_of(key_no)
         results_raw = body.get("results") or []
@@ -354,12 +363,12 @@ class ApinexWebSearchProvider(BaseWebSearchProvider):
         # Whole-batch failure = outage, not per-page problems → try Exa.
         if results and all(r.get("error") for r in results):
             logger.warning("APInex extract failed all %d URL(s); falling back to Exa", len(urls))
-            return await self._fallback_extract(urls, format, "all URLs failed")
+            return await self._fallback_extract(urls, format, "all URLs failed", call_id)
 
         # Patch partial failures per-URL via Exa (best-effort, keeps successes).
         failed_idx = [i for i, r in enumerate(results) if r.get("error")]
         if failed_idx and _fallback_enabled():
-            rescued = await self._exa_extract([urls[i] for i in failed_idx], format)
+            rescued = await self._exa_extract([urls[i] for i in failed_idx], format, call_id)
             if rescued and not all(r.get("error") for r in rescued):
                 for pos, i in enumerate(failed_idx):
                     if not rescued[pos].get("error"):
@@ -370,7 +379,8 @@ class ApinexWebSearchProvider(BaseWebSearchProvider):
         return results
 
     async def _fallback_extract(
-        self, urls: List[str], format: Optional[str], apinex_error: str
+        self, urls: List[str], format: Optional[str], apinex_error: str,
+        call_id: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         if not _fallback_enabled():
             from plugins.web._common import extract_fail
@@ -380,7 +390,7 @@ class ApinexWebSearchProvider(BaseWebSearchProvider):
             "APInex extract failed (%s); falling back to Exa for this call",
             apinex_error[:200],
         )
-        rescued = await self._exa_extract(urls, format)
+        rescued = await self._exa_extract(urls, format, call_id)
         for r in rescued:
             if not r.get("error"):
                 meta = r.setdefault("metadata", {})
@@ -392,7 +402,8 @@ class ApinexWebSearchProvider(BaseWebSearchProvider):
         return rescued
 
     @staticmethod
-    async def _exa_extract(urls: List[str], format: Optional[str]) -> List[Dict[str, Any]]:
+    async def _exa_extract(urls: List[str], format: Optional[str],
+                           call_id: Optional[int] = None) -> List[Dict[str, Any]]:
         from plugins.web._common import extract_fail
         from plugins.web.apinex import tracker as _meter
 
@@ -407,7 +418,7 @@ class ApinexWebSearchProvider(BaseWebSearchProvider):
                                key_fp="exa", endpoint="contents", ok=False, status=None,
                                latency_ms=(time.monotonic() - t0) * 1000,
                                req_summary=f"{len(urls)} url(s): {str(urls[0])[:150] if urls else '-'}",
-                               route="fallback")
+                               route="fallback", call_id=call_id)
             return extract_fail(urls, f"Exa fallback failed: {exc}")
         served = sum(1 for r in results if not r.get("error"))
         _meter.log_request(profile=_meter_fallback_profile(), key_no=0,
@@ -416,7 +427,7 @@ class ApinexWebSearchProvider(BaseWebSearchProvider):
                            latency_ms=(time.monotonic() - t0) * 1000,
                            req_summary=f"{len(urls)} url(s): {str(urls[0])[:150] if urls else '-'}",
                            resp_bytes=sum(len(str(r.get('content') or '')) for r in results),
-                           result_count=served, route="fallback")
+                           result_count=served, route="fallback", call_id=call_id)
         return results
 
     # ---- picker ---------------------------------------------------------
