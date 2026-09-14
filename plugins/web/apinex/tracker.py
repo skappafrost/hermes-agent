@@ -9,8 +9,13 @@ Schema (``requests``):
 Backends (``route``): every row is tagged 'apinex' (pool calls, key_no 1..9)
 or 'fallback' (the Exa safety net that serves calls APInex could not —
 key_no 0). Requests APInex rejects outright (e.g. HTTP 402 after the paid
-tier switch) keep route='apinex' with ok=0 and the status code. The
-dashboard's Routing view compares the buckets.
+tier switch) keep route='apinex' with ok=0 and the status code.
+
+A single *logical* call (one tool invocation) can span several attempt rows:
+key rotation, backoff retries, and the Exa rescue. All of them share one
+``call_id``, so the dashboard can count calls instead of raw attempts: a call
+whose rescue succeeded is a SUCCESS (via Exa), not a failure. Legacy rows
+have NULL call_id and each counts as its own call.
 
 Long-term storage: raw rows are pruned past ``RAW_RETENTION_DAYS`` (default
 30) while per-hour rollups in ``hourly`` are kept indefinitely for trends.
@@ -72,7 +77,8 @@ def _connect() -> Optional[sqlite3.Connection]:
                 req_summary TEXT,
                 resp_bytes INTEGER,
                 result_count INTEGER,
-                route TEXT NOT NULL DEFAULT 'apinex'
+                route TEXT NOT NULL DEFAULT 'apinex',
+                call_id INTEGER
             )"""
         )
         con.execute("CREATE INDEX IF NOT EXISTS idx_requests_ts ON requests(ts)")
@@ -81,7 +87,8 @@ def _connect() -> Optional[sqlite3.Connection]:
             have = {r[1] for r in con.execute("PRAGMA table_info(requests)").fetchall()}
             for _col, _ddl in (("req_summary", "TEXT"), ("resp_bytes", "INTEGER"),
                                ("result_count", "INTEGER"),
-                               ("route", "TEXT NOT NULL DEFAULT 'apinex'")):
+                               ("route", "TEXT NOT NULL DEFAULT 'apinex'"),
+                               ("call_id", "INTEGER")):
                 if _col not in have:
                     con.execute(f"ALTER TABLE requests ADD COLUMN {_col} {_ddl}")
         except Exception:
@@ -100,6 +107,17 @@ def _connect() -> Optional[sqlite3.Connection]:
     except Exception as exc:  # noqa: BLE001 — metering must never break tools
         logger.debug("APInex meter unavailable: %s", exc)
         return None
+
+
+def new_call_id() -> int:
+    """Unique id for one logical tool call.
+
+    Passed to every :func:`log_request` made while serving that call so the
+    dashboard can group attempts (key rotations, retries, Exa rescue).
+    A random 48-bit value — collision-free across processes without any
+    shared state, and attempts of one call always run in one process.
+    """
+    return int.from_bytes(os.urandom(6), "big")
 
 
 def parse_limit_headers(headers) -> tuple[Optional[int], Optional[int]]:
@@ -140,8 +158,14 @@ def log_request(
     resp_bytes: Optional[int] = None,
     result_count: Optional[int] = None,
     route: str = "apinex",
+    call_id: Optional[int] = None,
 ) -> None:
-    """Append one meter row + bump the hourly rollup. Never raises."""
+    """Append one meter row + bump the hourly rollup. Never raises.
+
+    ``call_id`` (from :func:`new_call_id`) groups every attempt of one
+    logical tool call — key rotations, retries, and the Exa rescue — so
+    the dashboard can measure call-level success instead of attempts.
+    """
     con = _connect()
     if con is None:
         return
@@ -151,12 +175,12 @@ def log_request(
             con.execute(
                 "INSERT INTO requests(ts, profile, key_no, key_fp, endpoint, ok, status,"
                 " latency_ms, limit_remaining, limit_reset_s,"
-                " req_summary, resp_bytes, result_count, route)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                " req_summary, resp_bytes, result_count, route, call_id)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (now, profile, key_no, key_fp, endpoint, 1 if ok else 0,
                  status, latency_ms, limit_remaining, limit_reset_s,
                  (req_summary or "")[:400] if req_summary else None,
-                 resp_bytes, result_count, route),
+                 resp_bytes, result_count, route, call_id),
             )
             hour = int(now // 3600) * 3600
             con.execute(
