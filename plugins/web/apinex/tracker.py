@@ -6,6 +6,12 @@ Schema (``requests``):
     ts, profile, key_no, key_fp, endpoint, ok, status, latency_ms,
     limit_remaining, limit_reset_s   (last two from upstream headers when present)
 
+Backends (``route``): every row is tagged 'apinex' (pool calls, key_no 1..9)
+or 'fallback' (the Exa safety net that serves calls APInex could not —
+key_no 0). Requests APInex rejects outright (e.g. HTTP 402 after the paid
+tier switch) keep route='apinex' with ok=0 and the status code. The
+dashboard's Routing view compares the buckets.
+
 Long-term storage: raw rows are pruned past ``RAW_RETENTION_DAYS`` (default
 30) while per-hour rollups in ``hourly`` are kept indefinitely for trends.
 """
@@ -65,7 +71,8 @@ def _connect() -> Optional[sqlite3.Connection]:
                 limit_reset_s INTEGER,
                 req_summary TEXT,
                 resp_bytes INTEGER,
-                result_count INTEGER
+                result_count INTEGER,
+                route TEXT NOT NULL DEFAULT 'apinex'
             )"""
         )
         con.execute("CREATE INDEX IF NOT EXISTS idx_requests_ts ON requests(ts)")
@@ -73,7 +80,8 @@ def _connect() -> Optional[sqlite3.Connection]:
         try:
             have = {r[1] for r in con.execute("PRAGMA table_info(requests)").fetchall()}
             for _col, _ddl in (("req_summary", "TEXT"), ("resp_bytes", "INTEGER"),
-                               ("result_count", "INTEGER")):
+                               ("result_count", "INTEGER"),
+                               ("route", "TEXT NOT NULL DEFAULT 'apinex'")):
                 if _col not in have:
                     con.execute(f"ALTER TABLE requests ADD COLUMN {_col} {_ddl}")
         except Exception:
@@ -131,6 +139,7 @@ def log_request(
     req_summary: Optional[str] = None,
     resp_bytes: Optional[int] = None,
     result_count: Optional[int] = None,
+    route: str = "apinex",
 ) -> None:
     """Append one meter row + bump the hourly rollup. Never raises."""
     con = _connect()
@@ -142,12 +151,12 @@ def log_request(
             con.execute(
                 "INSERT INTO requests(ts, profile, key_no, key_fp, endpoint, ok, status,"
                 " latency_ms, limit_remaining, limit_reset_s,"
-                " req_summary, resp_bytes, result_count)"
-                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                " req_summary, resp_bytes, result_count, route)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (now, profile, key_no, key_fp, endpoint, 1 if ok else 0,
                  status, latency_ms, limit_remaining, limit_reset_s,
                  (req_summary or "")[:400] if req_summary else None,
-                 resp_bytes, result_count),
+                 resp_bytes, result_count, route),
             )
             hour = int(now // 3600) * 3600
             con.execute(
