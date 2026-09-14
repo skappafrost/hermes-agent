@@ -73,6 +73,12 @@ def _fallback_enabled() -> bool:
         return True
 
 
+def _meter_fallback_profile() -> str:
+    from plugins.web.apinex import keypool as _pool
+
+    return _pool.profile_name()
+
+
 def _error_detail(resp: Any) -> str:
     # APInex errors: {"error": {"message": ..., "type": ...}} — surface the message when present.
     try:
@@ -265,21 +271,37 @@ class ApinexWebSearchProvider(BaseWebSearchProvider):
 
     def _fallback_search(self, query: str, limit: int, apinex_error: str) -> Dict[str, Any]:
         """Serve this call via the Exa provider (keyed or keyless) — the built-in fallback."""
+        from plugins.web.apinex import tracker as _meter
+        summary = f"q={query[:200]} n={limit}"
         if not _fallback_enabled():
             return search_fail(f"APInex search failed: {apinex_error}")
         logger.warning(
             "APInex search failed (%s); falling back to Exa for this call",
             apinex_error[:200],
         )
+        t0 = time.monotonic()
         try:
             from plugins.web.exa.provider import ExaWebSearchProvider
 
             resp = ExaWebSearchProvider().search(query, limit)
         except Exception as exc:  # noqa: BLE001 — fallback is best-effort
+            _meter.log_request(profile=_meter_fallback_profile(), key_no=0,
+                               key_fp="exa", endpoint="search", ok=False, status=None,
+                               latency_ms=(time.monotonic() - t0) * 1000,
+                               req_summary=summary, route="fallback")
             return search_fail(
                 f"APInex search failed: {apinex_error} (Exa fallback also failed: {exc})"
             )
-        if resp.get("success"):
+        ok = bool(resp.get("success"))
+        hits = ((resp.get("data") or {}).get("web")) or []
+        _meter.log_request(profile=_meter_fallback_profile(), key_no=0,
+                           key_fp="exa", endpoint="search", ok=ok,
+                           status=None if ok else -1,
+                           latency_ms=(time.monotonic() - t0) * 1000,
+                           req_summary=summary,
+                           resp_bytes=len(json.dumps(resp or {}, default=str)),
+                           result_count=len(hits), route="fallback")
+        if ok:
             resp.setdefault("data", {}).setdefault("fallback_from", "apinex")
             resp["data"]["backend_error"] = (
                 f"APInex failed this call ({apinex_error[:300]}); result served by the Exa fallback."
@@ -372,14 +394,30 @@ class ApinexWebSearchProvider(BaseWebSearchProvider):
     @staticmethod
     async def _exa_extract(urls: List[str], format: Optional[str]) -> List[Dict[str, Any]]:
         from plugins.web._common import extract_fail
+        from plugins.web.apinex import tracker as _meter
 
+        t0 = time.monotonic()
         try:
             from plugins.web.exa.provider import ExaWebSearchProvider
 
             # Exa's extract is sync — thread it so the event loop never blocks.
-            return await asyncio.to_thread(ExaWebSearchProvider().extract, urls, format=format)
+            results = await asyncio.to_thread(ExaWebSearchProvider().extract, urls, format=format)
         except Exception as exc:  # noqa: BLE001 — fallback is best-effort
+            _meter.log_request(profile=_meter_fallback_profile(), key_no=0,
+                               key_fp="exa", endpoint="contents", ok=False, status=None,
+                               latency_ms=(time.monotonic() - t0) * 1000,
+                               req_summary=f"{len(urls)} url(s): {str(urls[0])[:150] if urls else '-'}",
+                               route="fallback")
             return extract_fail(urls, f"Exa fallback failed: {exc}")
+        served = sum(1 for r in results if not r.get("error"))
+        _meter.log_request(profile=_meter_fallback_profile(), key_no=0,
+                           key_fp="exa", endpoint="contents", ok=served > 0,
+                           status=None if served > 0 else -1,
+                           latency_ms=(time.monotonic() - t0) * 1000,
+                           req_summary=f"{len(urls)} url(s): {str(urls[0])[:150] if urls else '-'}",
+                           resp_bytes=sum(len(str(r.get('content') or '')) for r in results),
+                           result_count=served, route="fallback")
+        return results
 
     # ---- picker ---------------------------------------------------------
 
