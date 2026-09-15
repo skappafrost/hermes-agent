@@ -1249,6 +1249,14 @@ class DiscordAdapter(DiscordMediaMixin, BasePlatformAdapter):
                 await adapter_self._on_platform_message_delete(message)
 
             @self._client.event
+            async def on_raw_reaction_add(payload):
+                await adapter_self._on_platform_reaction(payload, removed=False)
+
+            @self._client.event
+            async def on_raw_reaction_remove(payload):
+                await adapter_self._on_platform_reaction(payload, removed=True)
+
+            @self._client.event
             async def on_thread_create(thread):
                 await adapter_self._on_platform_thread_create(thread)
 
@@ -1552,6 +1560,61 @@ class DiscordAdapter(DiscordMediaMixin, BasePlatformAdapter):
         def _extra(message, author):
             return {"author_id": str(getattr(author, "id", "") or "")[:128] or None}
         await self._emit_platform_event("message_deleted", lambda: self._message_event_parts(message, _extra))
+
+    async def _on_platform_reaction(self, payload, *, removed: bool = False) -> None:
+        """Normalize ``on_raw_reaction_add/remove`` into the shared reaction-hook contract
+        (``event_name`` = ``reaction:added`` / ``reaction:removed``) consumed by
+        ``GatewayManager._handle_reaction_event`` → HookRegistry. Telegram/Slack already
+        emit this shape; Discord listeners were the missing link.
+
+        Fetches the reacted-to message text (``message_content``) so hooks can bind a
+        reaction to message content without their own round trip. Every failure is
+        swallowed to DEBUG — reacting must never break the gateway event loop.
+        """
+        handler = getattr(self, "_reaction_handler", None)
+        if handler is None:
+            return
+        try:
+            emoji = getattr(payload, "emoji", None)
+            reaction = getattr(emoji, "name", None) or str(emoji or "")
+            user_id = getattr(payload, "user_id", None)
+            channel_id = getattr(payload, "channel_id", None)
+            message_id = getattr(payload, "message_id", None)
+            if not reaction or not user_id or not channel_id or not message_id:
+                return
+            client = self._client
+            me_id = getattr(getattr(client, "user", None), "id", None)
+            if me_id and user_id == me_id:
+                return  # our own ack markers (👀/✅/❌) must not feed back
+            guild_id = getattr(payload, "guild_id", None)
+            guild = client.get_guild(guild_id) if guild_id else None
+            if guild is not None:
+                reactor = guild.get_member(user_id)
+                if reactor is not None and getattr(reactor, "bot", False):
+                    return  # another bot's reaction
+            ctx: Dict[str, Any] = {
+                "platform": "discord",
+                "event_name": f"reaction:{'removed' if removed else 'added'}",
+                "reaction": reaction,
+                "user_id": str(user_id),
+                "channel_id": str(channel_id),
+                "message_id": str(message_id),
+                "guild_id": str(guild_id or ""),
+            }
+            try:
+                channel = client.get_channel(channel_id) or (
+                    guild.get_channel(channel_id) if guild else None)
+                if channel is not None:
+                    msg = await channel.fetch_message(message_id)
+                    msg_author = getattr(msg, "author", None)
+                    ctx["message_content"] = (getattr(msg, "content", "") or "")[:8000]
+                    ctx["message_author_id"] = str(getattr(msg_author, "id", "") or "")
+                    ctx["message_author_bot"] = bool(getattr(msg_author, "bot", False))
+            except Exception:
+                logger.debug("[Discord] reaction message fetch failed", exc_info=True)
+            await handler(ctx)
+        except Exception:
+            logger.debug("[Discord] reaction hook forwarding failed", exc_info=True)
 
     async def _on_platform_thread_create(self, thread) -> None:
         """Normalize ``on_thread_create`` into event_type ``thread_created``."""
