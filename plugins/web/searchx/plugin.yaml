@@ -1,0 +1,7 @@
+name: web-searchx
+version: 1.0.0
+description: "SearchX web search + page extraction (hybrid keyword+semantic index, 3K req/day free). Requires SEARCHX_API_KEY — sign up at https://searchx.dev. Auto-metered into the APInex pool dashboard."
+author: Skappa (custom)
+kind: backend
+provides_web_providers:
+  - searchx

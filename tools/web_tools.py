@@ -301,8 +301,11 @@ def web_search_tool(query: str, limit: int = 5) -> str:
             fallback = "No web search provider configured. Run `hermes tools` to set one up."
             response_data = {"success": False, "error": _no_provider_error("search", fallback)}
         else:
+            from plugins.web.apinex import tracker as _meter
+
             logger.info("Web search via %s: '%s' (limit: %d)", provider.name, query, limit)
-            response_data = _memoized_search(provider, query, limit)
+            with _meter.ensure_call_scope():
+                response_data = _memoized_search(provider, query, limit)
 
         debug_call_data["results_count"] = len(response_data.get("data", {}).get("web", []))
         result_json = json.dumps(response_data, indent=2, ensure_ascii=False)
@@ -338,10 +341,47 @@ def _memoized_search(provider, query: str, limit: int) -> dict:
             # Re-check inside the lock: a concurrent identical call may have stored.
             response_data = search_memo.lookup(provider.name, query, limit)
             if response_data is None:
-                response_data, was_rescued = _paid_search()
+                response_data, was_rescued = _metered_paid_search(
+                    provider, _paid_search, query, limit)
                 if not was_rescued:
                     search_memo.store(provider.name, query, limit, response_data)
     return slice_search_response(response_data, limit)
+
+
+def _metered_paid_search(provider, call_fn, query: str, limit: int) -> tuple:
+    """Pool-dashboard row for every tool-layer web_search call.
+
+    Self-metered vendors (apinex and its chain tiers) already wrote their
+    own per-attempt rows inside the provider — here we only add rows for
+    flows that would otherwise be invisible to the dashboard: a non-chain
+    vendor serving directly (route=provider.name) and the keyless rescue
+    ring (route=keyless). One row per logical call at this level; the
+    call_id comes from the scope opened in ``_web_search_tool``.
+    """
+    import time
+
+    from plugins.web import _meter
+
+    t0 = time.monotonic()
+    response_data, was_rescued = call_fn()
+    try:
+        route = "keyless" if was_rescued else str(provider.name)
+        if route != "keyless" and route in _meter.self_metered():
+            return response_data, was_rescued  # provider already logged it itself
+        results = (response_data.get("data") or {}).get("web") or []
+        _meter.log(
+            route=route, endpoint="search",
+            ok=bool(response_data.get("success")),
+            latency_ms=(time.monotonic() - t0) * 1000,
+            status=None if response_data.get("success") else -1,
+            key_fp=getattr(provider, "name", route),
+            req_summary=_meter.summarize_search(query, limit),
+            resp_bytes=_meter.size_of(results),
+            result_count=len(results) or None,
+        )
+    except Exception:  # noqa: BLE001 — metering must never break a live call
+        pass
+    return response_data, was_rescued
 
 
 async def web_extract_tool(urls: List[Any], format: str = None, char_limit: Optional[int] = None) -> str:
