@@ -23,12 +23,14 @@ Long-term storage: raw rows are pruned past ``RAW_RETENTION_DAYS`` (default
 
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import logging
 import os
 import sqlite3
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Iterator, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +122,59 @@ def new_call_id() -> int:
     return int.from_bytes(os.urandom(6), "big")
 
 
+# Ambient logical-call scope. The tool layer (or the apinex chain) opens
+# ``call_scope()`` once per user-facing call; every ``log_request`` inside —
+# no matter which provider serves it — inherits the same call_id, so the
+# dashboard can group the APInex attempt + SearchX/UnSearch/Exa rescue into
+# ONE logical call with its total wall-clock latency. A contextvar (not a
+# plain global) because the dispatcher runs concurrent tool calls on threads
+# and asyncio tasks. The value is a MUTABLE dict, not a scalar: the tool
+# layer's scope must survive ``asyncio.to_thread`` (which copies the context
+# into the worker thread — scalar sets there would be invisible to the
+# parent, while mutations of the shared dict are seen through every copy).
+_scope_var: contextvars.ContextVar[Optional[dict]] = contextvars.ContextVar(
+    "apinex_meter_scope", default=None
+)
+
+
+def current_call_id() -> Optional[int]:
+    scope = _scope_var.get()
+    return scope["call_id"] if scope else None
+
+
+def attempt_count() -> int:
+    """Log requests made inside the currently open call scope (0 = none)."""
+    scope = _scope_var.get()
+    return scope["attempts"] if scope else 0
+
+
+@contextlib.contextmanager
+def call_scope(call_id: Optional[int] = None) -> Iterator[int]:
+    """Bind one logical call id for every metered attempt inside the block."""
+    scope = {"call_id": call_id if call_id is not None else new_call_id(), "attempts": 0}
+    tok = _scope_var.set(scope)
+    try:
+        yield scope["call_id"]
+    finally:
+        _scope_var.reset(tok)
+
+
+@contextlib.contextmanager
+def ensure_call_scope() -> Iterator[int]:
+    """Reuse the ambient call scope when one is open, else own a fresh one.
+
+    Lets every metered entry point (the tool layer AND the apinex provider
+    chain when called directly, e.g. from tests or scripts) wrap without
+    double-splitting a call: the innermost opener is always the outer scope.
+    """
+    scope = _scope_var.get()
+    if scope is not None:
+        yield scope["call_id"]
+        return
+    with call_scope() as cid:
+        yield cid
+
+
 def parse_limit_headers(headers) -> tuple[Optional[int], Optional[int]]:
     """Best-effort ``(remaining, reset_epoch)`` from upstream rate-limit headers."""
     remaining: Optional[int] = None
@@ -145,7 +200,7 @@ def parse_limit_headers(headers) -> tuple[Optional[int], Optional[int]]:
 
 def log_request(
     *,
-    profile: str,
+    profile: Optional[str] = None,
     key_no: int,
     key_fp: str,
     endpoint: str,
@@ -163,12 +218,30 @@ def log_request(
     """Append one meter row + bump the hourly rollup. Never raises.
 
     ``call_id`` (from :func:`new_call_id`) groups every attempt of one
-    logical tool call — key rotations, retries, and the Exa rescue — so
+    logical tool call — key rotations, retries, and fallback rescues — so
     the dashboard can measure call-level success instead of attempts.
+    Omit it to inherit the ambient :func:`call_scope` id (the whole
+    APInex → SearchX → Exa chain then rides one logical call); omit
+    *profile* to auto-detect the running Hermes profile.
     """
     con = _connect()
     if con is None:
         return
+    if call_id is None:
+        call_id = current_call_id()
+    if not profile:
+        try:
+            from plugins.web.apinex import keypool as _pool
+
+            profile = _pool.profile_name()
+        except Exception:  # noqa: BLE001
+            profile = "?"
+    try:
+        scope = _scope_var.get()
+        if scope is not None:
+            scope["attempts"] += 1
+    except Exception:  # noqa: BLE001 — context var bump is cosmetic bookkeeping
+        pass
     try:
         now = time.time()
         with con:

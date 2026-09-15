@@ -137,21 +137,37 @@ async def _dispatch_extract(provider, fetch_urls: List[str], format: Optional[st
 
     Rescue fires on a raised exception or when the WHOLE batch failed (backend outage, not per-page
     problems). Rescued batches are never cached.
+
+    Pool-dashboard rows: the whole dispatch is one logical call (scope opened here); self-metered
+    vendors (apinex + chain tiers) log their own attempts, so only direct non-chain vendors and the
+    keyless rescue get a row from this layer.
     """
     import inspect
+    import time
+    from plugins.web import _meter
+    from plugins.web.apinex import tracker as _pool_meter
     from tools.web_result_cache import extract_cache_put
-    try:
-        if inspect.iscoroutinefunction(provider.extract):
-            results = await provider.extract(fetch_urls, format=format)
-        else:  # sync extract() runs in a thread so network I/O never blocks the loop
-            results = await asyncio.to_thread(provider.extract, fetch_urls, format=format)
-    except Exception as exc:  # noqa: BLE001 — candidate for rescue
-        if not _rescue_eligible(provider):
-            raise
-        failed = [_result_entry(u, str(exc)) for u in fetch_urls]
-        return await asyncio.to_thread(_rescue_extract, provider.name, fetch_urls, failed)
-    if results and all(r.get("error") for r in results) and _rescue_eligible(provider):
-        return await asyncio.to_thread(_rescue_extract, provider.name, fetch_urls, results)
+
+    with _pool_meter.ensure_call_scope():
+        t0 = time.monotonic()
+        rescued = False
+        try:
+            if inspect.iscoroutinefunction(provider.extract):
+                results = await provider.extract(fetch_urls, format=format)
+            else:  # sync extract() runs in a thread so network I/O never blocks the loop
+                results = await asyncio.to_thread(provider.extract, fetch_urls, format=format)
+        except Exception as exc:  # noqa: BLE001 — candidate for rescue
+            if not _rescue_eligible(provider):
+                _meter_route(_meter, provider, fetch_urls, format, t0, [], "")
+                raise
+            failed = [_result_entry(u, str(exc)) for u in fetch_urls]
+            results = await asyncio.to_thread(_rescue_extract, provider.name, fetch_urls, failed)
+            rescued = True
+        if not rescued and results and all(r.get("error") for r in results) and _rescue_eligible(provider):
+            results = await asyncio.to_thread(_rescue_extract, provider.name, fetch_urls, results)
+            rescued = True
+        _meter_route(_meter, provider, fetch_urls, format, t0, results or [],
+                     "keyless" if rescued else "")
 
     # Cache each successful fetch's full clean text (best-effort; oversized skipped).
     for url, fetched in zip(fetch_urls, results):
@@ -159,6 +175,36 @@ async def _dispatch_extract(provider, fetch_urls: List[str], format: Optional[st
         if _content and not fetched.get("error"):
             extract_cache_put(url, _content, fetched.get("title", ""), format=format, provider=provider.name)
     return results
+
+
+def _meter_route(_meter, provider, fetch_urls, format, t0, results, served_via: str) -> None:
+    """One extract row per tool-layer call, unless the provider self-meters.
+
+    ``served_via``: 'keyless' when the rescue ring served the batch, '' for a
+    normal provider serve (results may still all be errors — that logs ok=0).
+    """
+    import time
+
+    try:
+        if served_via == "keyless":
+            route = "keyless"
+        else:
+            route = str(provider.name)
+            if route in _meter.self_metered():
+                return  # provider (and its chain) already logged the attempts
+        ok_entries = [r for r in results if not r.get("error")]
+        _meter.log(
+            route=route, endpoint="contents",
+            ok=bool(ok_entries),
+            latency_ms=(time.monotonic() - t0) * 1000,
+            status=None if ok_entries else -1,
+            key_fp=str(getattr(provider, "name", route)),
+            req_summary=_meter.summarize_urls(fetch_urls),
+            resp_bytes=sum(len(str(r.get("content") or "")) for r in ok_entries) or None,
+            result_count=len(ok_entries) or None,
+        )
+    except Exception:  # noqa: BLE001 — metering must never break a live call
+        pass
 
 
 async def _extract_safe_urls(provider, safe_urls: List[str], format: Optional[str]) -> List[dict]:
