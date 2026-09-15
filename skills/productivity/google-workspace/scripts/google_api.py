@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Google Workspace API CLI for Hermes Agent.
+"""Google Workspace API CLI for Hermes Agent (multi-account).
 
 Uses the Google Workspace CLI (`gws`) when available, but preserves the
 existing Hermes-facing JSON contract and falls back to the Python client
 libraries if `gws` is not installed.
 
 Usage:
-  python google_api.py gmail search "is:unread" [--max 10]
-  python google_api.py gmail get MESSAGE_ID
+  python google_api.py --account work gmail search "is:unread" [--max 10]
+  python google_api.py gmail get MESSAGE_ID           # uses 'default' account
   python google_api.py gmail send --to user@example.com --subject "Hi" --body "Hello"
-  python google_api.py gmail reply MESSAGE_ID --body "Thanks"
+  python google_api.py gmail reply MESSAGE_ID --body "Hello"
   python google_api.py calendar list [--from DATE] [--to DATE] [--calendar primary]
   python google_api.py calendar create --summary "Meeting" --start DATETIME --end DATETIME
   python google_api.py drive search "budget report" [--max 10]
@@ -18,12 +18,14 @@ Usage:
   python google_api.py sheets update SHEET_ID RANGE --values '[[...]]'
   python google_api.py sheets append SHEET_ID RANGE --values '[[...]]'
   python google_api.py docs get DOC_ID
+  python google_api.py accounts list                 # list all stored accounts
 """
 
 import argparse
 import base64
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -39,7 +41,6 @@ if _SCRIPTS_DIR not in sys.path:
 from _hermes_home import get_hermes_home
 
 HERMES_HOME = get_hermes_home()
-TOKEN_PATH = HERMES_HOME / "google_token.json"
 CLIENT_SECRET_PATH = HERMES_HOME / "google_client_secret.json"
 
 SCOPES = [
@@ -54,6 +55,63 @@ SCOPES = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# Multi-account helpers
+# ---------------------------------------------------------------------------
+
+_ACCOUNT_RE = re.compile(r"^google_token\.(.+)\.json$")
+
+
+def _resolve_token_path(account: str | None = None) -> Path:
+    """Return the token path for the given account (None = 'default')."""
+    account = (account or "").strip().lower()
+    if not account or account == "default":
+        return HERMES_HOME / "google_token.json"
+    return HERMES_HOME / f"google_token.{account}.json"
+
+
+def _list_accounts() -> list[dict]:
+    """Scan HERMES_HOME for all google_token*.json files."""
+    accounts = []
+    for f in sorted(HERMES_HOME.iterdir()):
+        if f.name == "google_token.json":
+            account_name = "default"
+        else:
+            m = _ACCOUNT_RE.match(f.name)
+            if not m:
+                continue
+            account_name = m.group(1)
+
+        try:
+            payload = json.loads(f.read_text())
+        except Exception:
+            continue
+
+        # Try to extract email from id_token
+        email = ""
+        id_token = payload.get("id_token", "")
+        if id_token and "." in id_token:
+            try:
+                import base64 as _b64
+                p_part = id_token.split(".")[1]
+                p_part += "=" * (-len(p_part) % 4)
+                claims = json.loads(_b64.urlsafe_b64decode(p_part))
+                email = claims.get("email", "")
+            except Exception:
+                pass
+
+        has_rt = "yes" if payload.get("refresh_token") else "no"
+
+        accounts.append({
+            "account": account_name,
+            "file": f.name,
+            "email": email,
+            "has_refresh_token": has_rt,
+            "token_path": str(f),
+        })
+    return accounts
+
+
 def _normalize_authorized_user_payload(payload: dict) -> dict:
     normalized = dict(payload)
     if not normalized.get("type"):
@@ -61,16 +119,23 @@ def _normalize_authorized_user_payload(payload: dict) -> dict:
     return normalized
 
 
+# ---------------------------------------------------------------------------
+# Global token path (set once from --account, used by all command handlers)
+# ---------------------------------------------------------------------------
+
+TOKEN_PATH: Path = HERMES_HOME / "google_token.json"  # overridden at startup
+
+
 def _ensure_authenticated():
     if not TOKEN_PATH.exists():
         print("Not authenticated. Run the setup script first:", file=sys.stderr)
-        print(f"  python {Path(__file__).parent / 'setup.py'}", file=sys.stderr)
+        print(f"  python {Path(__file__).parent / 'setup.py'} --account <name>", file=sys.stderr)
         sys.exit(1)
 
 
 def _stored_token_scopes() -> list[str]:
     try:
-        data = json.loads(TOKEN_PATH.read_text(encoding="utf-8"))
+        data = json.loads(TOKEN_PATH.read_text())
     except Exception:
         return list(SCOPES)
     scopes = data.get("scopes")
@@ -108,7 +173,7 @@ def _run_gws(parts: list[str], *, params: dict | None = None, body: dict | None 
     result = subprocess.run(
         cmd,
         capture_output=True,
-        text=True, encoding='utf-8', errors='replace',
+        text=True,
         env=_gws_env(),
     )
     if result.returncode != 0:
@@ -256,7 +321,7 @@ def get_credentials():
             json.dumps(
                 _normalize_authorized_user_payload(json.loads(creds.to_json())),
                 indent=2,
-            ), encoding="utf-8"
+            )
         )
     if not creds.valid:
         print("Token is invalid. Re-run setup.", file=sys.stderr)
@@ -627,7 +692,6 @@ def calendar_delete(args):
     service.events().delete(calendarId=args.calendar, eventId=args.event_id).execute()
     print(json.dumps({"status": "deleted", "eventId": args.event_id}))
 
-
 # =========================================================================
 # Drive
 # =========================================================================
@@ -860,7 +924,6 @@ def drive_delete(args):
     service = build_service("drive", "v3")
     service.files().update(fileId=args.file_id, body=body).execute()
     print(json.dumps({"status": "trashed", "fileId": args.file_id, "permanent": False}))
-
 
 # =========================================================================
 # Contacts
@@ -1147,9 +1210,27 @@ def _docs_insert_text(doc_id: str, text: str, index: int, tab_id: str | None = N
 # =========================================================================
 
 
+def _add_account_arg(parser):
+    """Add --account to every subparser."""
+    parser.add_argument(
+        "--account", default="",
+        help="Google account name (default='default' → google_token.json; named → google_token.<name>.json)",
+    )
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Google Workspace API for Hermes Agent")
+    parser = argparse.ArgumentParser(description="Google Workspace API for Hermes Agent (multi-account)")
+
+    # Global --account flag (positioned before any subcommand)
+    parser.add_argument("--account", default="", help="Account name (default: 'default', named accounts use google_token.<name>.json)")
+
     sub = parser.add_subparsers(dest="service", required=True)
+
+    # --- accounts ---
+    accts = sub.add_parser("accounts")
+    accts_sub = accts.add_subparsers(dest="action", required=True)
+    p = accts_sub.add_parser("list", help="List all stored Google accounts")
+    p.set_defaults(func=lambda args: print(json.dumps({"accounts": _list_accounts()}, indent=2, ensure_ascii=False)))
 
     # --- Gmail ---
     gmail = sub.add_parser("gmail")
@@ -1316,6 +1397,12 @@ def main():
     p.set_defaults(func=docs_append)
 
     args = parser.parse_args()
+
+    # Resolve token path from --account
+    account = args.account.strip().lower() or None
+    global TOKEN_PATH
+    TOKEN_PATH = _resolve_token_path(account)
+
     args.func(args)
 
 
