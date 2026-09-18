@@ -23,7 +23,7 @@ from hermes_cli.update_cmd_common import _best_effort
 logger = logging.getLogger("hermes_cli.update_cmd")
 
 
-_UPDATE_RUNTIME_RELOAD_MODULES = "hermes_constants", "tools.environments.local", "tools.lazy_deps"
+_UPDATE_RUNTIME_RELOAD_MODULES = "hermes_constants", "tools.environments.local", "tools.lazy_deps", "utils"
 
 #: Package prefixes whose cached modules go stale when the checkout changes under this
 #: process; purged (not reloaded) so any LATER import chain resolves against fresh source.
