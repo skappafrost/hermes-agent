@@ -48,7 +48,7 @@ def _saved_output(job_name, job_id, prompt_body, response_body):
 
 class TestExtractResponse:
     def test_returns_only_the_response_body(self):
-        from cron.scheduler import _extract_cron_output_response
+        from cron.scheduler_prompt import _extract_cron_output_response
 
         doc = _saved_output("dev-digest", "aaaaaaaaaaaa", "SKILL TEXT " * 500, "Report: item A")
         extracted = _extract_cron_output_response(doc)
@@ -58,7 +58,7 @@ class TestExtractResponse:
         assert "## Prompt" not in extracted
 
     def test_keeps_run_time_for_recency(self):
-        from cron.scheduler import _extract_cron_output_response
+        from cron.scheduler_prompt import _extract_cron_output_response
 
         doc = _saved_output("dev-digest", "aaaaaaaaaaaa", "prompt", "the answer")
         extracted = _extract_cron_output_response(doc)
@@ -68,7 +68,7 @@ class TestExtractResponse:
 
     def test_last_marker_wins_when_prompt_echoes_a_response_heading(self):
         """A skill or an earlier injected block can contain '## Response'."""
-        from cron.scheduler import _extract_cron_output_response
+        from cron.scheduler_prompt import _extract_cron_output_response
 
         doc = _saved_output(
             "digest",
@@ -83,7 +83,7 @@ class TestExtractResponse:
 
     def test_falls_back_to_whole_doc_without_a_response_section(self):
         """blocked_config / error notices have no Response — keep them intact."""
-        from cron.scheduler import _extract_cron_output_response
+        from cron.scheduler_prompt import _extract_cron_output_response
 
         doc = (
             "# Cron Job: threat-monitor\n\n"
@@ -94,7 +94,7 @@ class TestExtractResponse:
         assert _extract_cron_output_response(doc) == doc.strip()
 
     def test_falls_back_when_response_body_is_empty(self):
-        from cron.scheduler import _extract_cron_output_response
+        from cron.scheduler_prompt import _extract_cron_output_response
 
         doc = _saved_output("digest", "aaaaaaaaaaaa", "prompt text", "   ")
         extracted = _extract_cron_output_response(doc)
