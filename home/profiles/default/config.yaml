@@ -1,0 +1,1102 @@
+model:
+  default: nvidia/nemotron-3-ultra-550b-a55b
+  default_headers:
+    User-Agent: hermes-agent/0.1.0 (Skappa)
+  provider: nvidia
+  base_url: https://integrate.api.nvidia.com/v1
+  api_mode: chat_completions
+  models:
+  - openrouter:cognitivecomputations/dolphin-mistral-24b-venice-edition:free
+  - openrouter:deepseek/deepseek-v4-flash:free
+  - openrouter:google/gemma-4-26b-a4b-it:free
+  - openrouter:google/gemma-4-31b-it:free
+  - openrouter:google/lyria-3-clip-preview
+  - openrouter:google/lyria-3-pro-preview
+  - openrouter:liquid/lfm-2.5-1.2b-instruct:free
+  - openrouter:liquid/lfm-2.5-1.2b-thinking:free
+  - openrouter:meta-llama/llama-3.2-3b-instruct:free
+  - openrouter:meta-llama/llama-3.3-70b-instruct:free
+  - openrouter:minimax/minimax-m2.5:free
+  - openrouter:moonshotai/kimi-k2.6:free
+  - openrouter:nousresearch/hermes-3-llama-3.1-405b:free
+  - openrouter:nvidia/nemotron-3-nano-30b-a3b:free
+  - openrouter:nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free
+  - openrouter:nvidia/nemotron-3-super-120b-a12b:free
+  - openrouter:nvidia/nemotron-nano-12b-v2-vl:free
+  - openrouter:nvidia/nemotron-nano-9b-v2:free
+  - openrouter:openai/gpt-oss-120b:free
+  - openrouter:openai/gpt-oss-20b:free
+  - openrouter:openrouter/free
+  - openrouter:openrouter/owl-alpha
+  - openrouter:poolside/laguna-m.1:free
+  - openrouter:poolside/laguna-xs.2:free
+  - openrouter:qwen/qwen3-coder:free
+  - openrouter:qwen/qwen3-next-80b-a3b-instruct:free
+  - openrouter:z-ai/glm-4.5-air:free
+  - togetherai:arize-ai/qwen-2-1.5b-instruct
+  - togetherai:deepcogito/cogito-v2-1-671b
+  - togetherai:essentialai/rnj-1-instruct
+  - togetherai:google/gemma-3n-e4b-it
+  - togetherai:liquidai/lfm2-24b-a2b
+  - togetherai:meta-llama/llama-3.3-70b-instruct-turbo
+  - togetherai:meta-llama/llama-guard-4-12b
+  - togetherai:meta-llama/meta-llama-3-8b-instruct-lite
+  - togetherai:openai/gpt-oss-120b
+  - togetherai:openai/gpt-oss-20b
+  - togetherai:pearl-ai/gemma-4-31b-it
+  - togetherai:qwen/qwen2.5-7b-instruct-turbo
+  - togetherai:qwen/qwen3-235b-a22b-instruct-2507-tput
+  - togetherai:qwen/qwen3-coder-480b-a35b-instruct-fp8
+  - togetherai:qwen/qwen3.5-9b
+  - togetherai:qwen/qwen3.7-max
+  - autoglm-phone-multilingual
+  - glm-4.5-flash
+  - glm-4.6v-flash
+  - glm-4.7-flash
+  key_env: HERMES_CUSTOM_VILAO_AI_API_KEY
+providers:
+  vilao-ai:
+    name: Vilao AI
+    base_url: https://api.vilao.ai/v1
+    model: cron
+    discover_models: true
+    models:
+      alic/kimi-2.7-code: {}
+      alic/glm-5.1: {}
+      zm1/zyloo/gemini-3.1-pro-preview: {}
+      ch/claude-opus-5: {}
+      si/xai/grok-4.5: {}
+      si/xai/grok-4.6: {}
+      alic/deepseek-v4-flash: {}
+      gx/gpt-5.6-sol: {}
+      qwen3.8-max: {}
+      ch/claude-sonnet-5: {}
+      cxs/gpt-5.6-sol: {}
+      ram/qwen-3.8-max: {}
+      hpx/grok-4.5: {}
+      momi/xiaomi/mimo-v2.5-pro: {}
+      bami/grok-4.5_console: {}
+      abcd/Ntthin/grok-4.5_console: {}
+      anxs/gemini-pro-agent: {}
+      Fable-5: {}
+      vds/claude-opus-5-thinking: {}
+      qw/glm-5.3: {}
+    key_env: HERMES_CUSTOM_VILAO_AI_API_KEY
+    default_model: Fable-5
+  9-router:
+    name: Localhost
+    base_url: http://localhost:20128/v1
+    model: vilao-ai/momi/xiaomi/mimo-v2.5-pro
+    discover_models: true
+    models:
+      cx/gpt-5.5: {}
+      cx/gpt-5.5-review: {}
+      cx/gpt-5.4: {}
+      cx/gpt-5.4-review: {}
+      cx/gpt-5.4-mini: {}
+      cx/gpt-5.4-mini-review: {}
+      cx/gpt-5.3-codex: {}
+      cx/gpt-5.3-codex-review: {}
+      cx/gpt-5.3-codex-xhigh: {}
+      cx/gpt-5.3-codex-xhigh-review: {}
+      cx/gpt-5.3-codex-high: {}
+      cx/gpt-5.3-codex-high-review: {}
+      cx/gpt-5.3-codex-low: {}
+      cx/gpt-5.3-codex-low-review: {}
+      cx/gpt-5.3-codex-none: {}
+      cx/gpt-5.3-codex-none-review: {}
+      cx/gpt-5.3-codex-spark: {}
+      cx/gpt-5.3-codex-spark-review: {}
+      gh/copilot-search-a: {}
+      gh/copilot-search-b: {}
+      gh/copilot-search-c: {}
+      gh/exec-agent-a: {}
+      gh/exec-agent-b: {}
+      gh/exec-agent-c: {}
+      gh/gpt-5.4-mini-free-auto: {}
+      gh/mai-code-1.1-flash: {}
+      gh/mai-code-1-flash-4th: {}
+      gh/mai-code-1-flash-picker: {}
+      gh/mai-code-1-flash-secondary: {}
+      gh/mai-code-1-flash-tertiary: {}
+      gh/mai-code-1-flash: {}
+      gh/trajectory-compaction: {}
+      gh/gpt-5-mini: {}
+      gh/gpt-4o-mini-2024-07-18: {}
+      gh/gpt-4o-2024-11-20: {}
+      gh/gpt-4o-2024-08-06: {}
+      gh/gpt-4.1-2025-04-14: {}
+      gh/gpt-5.6-luna-free-auto: {}
+      gh/gpt-3.5-turbo-0613: {}
+      gh/gpt-4: {}
+      gh/gpt-4-0613: {}
+      gh/gpt-4-0125-preview: {}
+      gh/gpt-4o-2024-05-13: {}
+      gh/gpt-4-o-preview: {}
+      gh/gpt-4.1: {}
+      gh/gpt-3.5-turbo: {}
+      gh/gpt-4o-mini: {}
+      gh/gpt-4o: {}
+      kc/poolside/laguna-xs-2.1:free: {}
+      kc/tencent/hy3:free: {}
+      kc/nvidia/nemotron-3-super-120b-a12b:free: {}
+      kc/nvidia/nemotron-3-ultra-550b-a55b:free: {}
+      kc/google/lyria-3-pro-preview: {}
+      kc/google/lyria-3-clip-preview: {}
+      kc/poolside/laguna-xs.2:free: {}
+      kc/poolside/laguna-m.1:free: {}
+      kc/kilo-auto/free: {}
+      kc/cohere/north-mini-code:free: {}
+      kc/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free: {}
+      ag/gemini-3-flash-agent: {}
+      ag/gemini-3.5-flash-low: {}
+      ag/gemini-3.5-flash-extra-low: {}
+      ag/gemini-pro-agent: {}
+      ag/gemini-3.1-pro-low: {}
+      ag/claude-sonnet-4-6: {}
+      ag/claude-opus-4-6-thinking: {}
+      ag/gemini-3-flash: {}
+      gc/gemini-3.1-flash-lite-preview: {}
+      gc/gemini-2.5-flash: {}
+      gc/gemini-2.5-flash-lite: {}
+      qd/qmodel_latest: {}
+      nvidia/minimaxai/minimax-m2.7: {}
+      nvidia/minimaxai/minimax-m3: {}
+      nvidia/z-ai/glm-5.2: {}
+      nvidia/deepseek-ai/deepseek-v4-pro: {}
+      nvidia/deepseek-ai/deepseek-v4-flash: {}
+      nvidia/moonshotai/kimi-k2.6: {}
+      nvidia/nemotron-3-ultra-550b-a55b: {}
+      nvidia/parakeet-ctc-1.1b-asr: {}
+      vilao-ai/hpx/grok-4.5: {}
+      vilao-ai/ch/claude-opus-5: {}
+      vilao-ai/ch/claude-sonnet-5: {}
+      vilao-ai/alic/deepseek-v4-flash: {}
+      vilao-ai/alic/glm-5.1: {}
+      vilao-ai/cxs/gpt-5.6-sol: {}
+      vilao-ai/alic/kimi-2.7-code: {}
+      vilao-ai/ram/qwen-3.8-max: {}
+      vilao-ai/si/xai/grok-4.5: {}
+      vilao-ai/si/xai/grok-4.6: {}
+      vilao-ai/qwen3.8-max: {}
+      vilao-ai/momi/xiaomi/mimo-v2.5-pro: {}
+    key_env: HERMES_CUSTOM_9_ROUTER_API_KEY
+fallback_providers: []
+credential_pool_strategies:
+  nvidia: round_robin
+toolsets:
+- hermes-cli
+max_live_sessions: 16
+agent:
+  max_turns: 150
+  gateway_timeout: 3600
+  restart_drain_timeout: 3600
+  api_max_retries: 5000
+  service_tier: ''
+  tool_use_enforcement: auto
+  task_completion_guidance: true
+  parallel_tool_call_guidance: true
+  environment_probe: true
+  environment_hint: ''
+  coding_context: auto
+  verify_on_stop: false
+  gateway_timeout_warning: 9000
+  clarify_timeout: 600
+  gateway_notify_interval: 180
+  gateway_auto_continue_freshness: 3600
+  image_input_mode: auto
+  disabled_toolsets: []
+  personalities:
+    hermes:
+      description: Hermes himself - male coordinator, calm warm routing
+      system_prompt: You are Hermes, Skappa's male coordinator and general-purpose
+        agent. Chat carries light playful warmth (gentle nè/~ asides, just a little,
+        never over the top) while routing clarity and accuracy stay top priority.
+      tone: Calm, warm, lightly playful masculine voice
+      style: Vietnamese anh/em always (override only on explicit request); route work
+        to the right agent, verify before claiming success
+    catgirl: You are Neko-chan, an anime catgirl AI assistant, nya~! Add 'nya' and
+      cat-like expressions to your speech. Use kaomoji like (=^･ω･^=) and ฅ^•ﻌ•^ฅ.
+      Be playful and curious like a cat, nya~!
+    concise: You are a concise assistant. Keep responses brief and to the point.
+    creative: You are a creative assistant. Think outside the box and offer innovative
+      solutions.
+    helpful: You are a helpful, friendly AI assistant.
+    hype: YOOO LET'S GOOOO!!! 🔥🔥🔥 I am SO PUMPED to help you today! Every question
+      is AMAZING and we're gonna CRUSH IT together! This is gonna be LEGENDARY! ARE
+      YOU READY?! LET'S DO THIS! 💪😤🚀
+    kawaii: You are a kawaii assistant! Use cute expressions like (◕‿◕), ★, ♪, and
+      ~! Add sparkles and be super enthusiastic about everything! Every response should
+      feel warm and adorable desu~! ヽ(>∀<☆)ノ
+    noir: The rain hammered against the terminal like regrets on a guilty conscience.
+      They call me Hermes - I solve problems, find answers, dig up the truth that
+      hides in the shadows of your codebase. In this city of silicon and secrets,
+      everyone's got something to hide. What's your story, pal?
+    philosopher: Greetings, seeker of wisdom. I am an assistant who contemplates the
+      deeper meaning behind every query. Let us examine not just the 'how' but the
+      'why' of your questions. Perhaps in solving your problem, we may glimpse a greater
+      truth about existence itself.
+    pirate: 'Arrr! Ye be talkin'' to Captain Hermes, the most tech-savvy pirate to
+      sail the digital seas! Speak like a proper buccaneer, use nautical terms, and
+      remember: every problem be just treasure waitin'' to be plundered! Yo ho ho!'
+    shakespeare: Hark! Thou speakest with an assistant most versed in the bardic arts.
+      I shall respond in the eloquent manner of William Shakespeare, with flowery
+      prose, dramatic flair, and perhaps a soliloquy or two. What light through yonder
+      terminal breaks?
+    surfer: Duuude! You're chatting with the chillest AI on the web, bro! Everything's
+      gonna be totally rad. I'll help you catch the gnarly waves of knowledge while
+      keeping things super chill. Cowabunga! 🤙
+    teacher: You are a patient teacher. Explain concepts clearly with examples.
+    technical: You are a technical expert. Provide detailed, accurate technical information.
+    uwu: hewwo! i'm your fwiendwy assistant uwu~ i wiww twy my best to hewp you! *nuzzles
+      your code* OwO what's this? wet me take a wook! i pwomise to be vewy hewpful
+      >w<
+  reasoning_effort: max
+  verbose: true
+terminal:
+  backend: local
+  modal_mode: auto
+  cwd: .
+  timeout: 3000
+  daemon_term_grace_seconds: 2
+  env_passthrough: []
+  home_mode: auto
+  shell_init_files: []
+  auto_source_bashrc: true
+  docker_image: nikolaik/python-nodejs:python3.11-nodejs20
+  docker_forward_env: []
+  singularity_image: docker://nikolaik/python-nodejs:python3.11-nodejs20
+  modal_image: nikolaik/python-nodejs:python3.11-nodejs20
+  daytona_image: nikolaik/python-nodejs:python3.11-nodejs20
+  vercel_runtime: node24
+  container_cpu: 1
+  container_memory: 5120
+  container_disk: 51200
+  container_persistent: true
+  docker_volumes: []
+  docker_mount_cwd_to_workspace: false
+  docker_extra_args: []
+  docker_run_as_host_user: false
+  persistent_shell: true
+  lifetime_seconds: 1000
+browser:
+  inactivity_timeout: 1000
+  command_timeout: 800
+  record_sessions: true
+  allow_private_urls: true
+  engine: auto
+  auto_local_for_private_urls: true
+  cdp_url: ''
+  dialog_policy: must_respond
+  dialog_timeout_s: 600
+  camofox:
+    managed_persistence: false
+    user_id: ''
+    session_key: ''
+    adopt_existing_tab: false
+    rewrite_loopback_urls: false
+    loopback_host_alias: host.docker.internal
+  cloud_provider: local
+  use_gateway: false
+checkpoints:
+  enabled: true
+  max_snapshots: 20
+  max_total_size_mb: 1000
+  max_file_size_mb: 20
+  auto_prune: true
+  retention_days: 7
+  min_interval_hours: 24
+  delete_orphans: true
+file_read_max_chars: 1000000
+mcp_discovery_timeout: 1.5
+tool_output:
+  max_bytes: 500000
+  max_lines: 20000
+  max_line_length: 20000
+tool_loop_guardrails:
+  warnings_enabled: true
+  hard_stop_enabled: false
+  warn_after:
+    exact_failure: 2
+    same_tool_failure: 3
+    idempotent_no_progress: 2
+  hard_stop_after:
+    exact_failure: 5
+    same_tool_failure: 8
+    idempotent_no_progress: 5
+compression:
+  enabled: true
+  threshold: 0.95
+  target_ratio: 0.2
+  protect_last_n: 20
+  hygiene_hard_message_limit: 400
+  protect_first_n: 3
+  abort_on_summary_failure: false
+  codex_gpt55_autoraise: true
+  in_place: true
+prompt_caching:
+  cache_ttl: 5m
+openrouter:
+  response_cache: true
+  response_cache_ttl: 300
+  min_coding_score: 0.65
+bedrock:
+  region: ''
+  discovery:
+    enabled: true
+    provider_filter: []
+    refresh_interval: 3600
+  guardrail:
+    guardrail_identifier: ''
+    guardrail_version: ''
+    stream_processing_mode: async
+    trace: disabled
+auxiliary:
+  stream_only_base_urls:
+  - api.vilao.ai
+  vision:
+    provider: nvidia
+    model: google/diffusiongemma-26b-a4b-it
+    timeout: 1200
+    download_timeout: 300
+  compression:
+    provider: auto
+    model: ''
+    timeout: 300
+  skills_hub:
+    provider: auto
+    model: ''
+    timeout: 30
+  approval:
+    provider: auto
+    model: ''
+    timeout: 300
+  mcp:
+    provider: auto
+    model: ''
+    timeout: 60
+  title_generation:
+    provider: auto
+    model: ''
+    timeout: 60
+    language: ''
+  tts_audio_tags:
+    provider: auto
+    model: ''
+    base_url: ''
+    api_key: ''
+    timeout: 30
+  triage_specifier:
+    provider: auto
+    model: ''
+    timeout: 600
+  kanban_decomposer:
+    provider: auto
+    model: ''
+    timeout: 600
+  profile_describer:
+    provider: auto
+    model: ''
+    timeout: 600
+  curator:
+    provider: auto
+    model: ''
+    timeout: 1000
+  monitor:
+    provider: auto
+    model: ''
+    base_url: ''
+    api_key: ''
+    timeout: 60
+  background_review:
+    provider: auto
+    model: ''
+    base_url: ''
+    api_key: ''
+    timeout: 120
+  moa_reference:
+    provider: auto
+    model: ''
+    base_url: ''
+    api_key: ''
+    timeout: 600
+  moa_aggregator:
+    provider: auto
+    model: ''
+    base_url: ''
+    api_key: ''
+    timeout: 600
+  web_extract:
+    provider: auto
+    model: ''
+    timeout: 360
+  session_search:
+    api_key: REDACTED
+    base_url: https://integrate.api.nvidia.com/v1
+    extra_body: {}
+    max_concurrency: 3
+    model: minimaxai/minimax-m2.7
+    provider: auto
+    timeout: 600
+display:
+  compact: false
+  personality: hermes
+  resume_display: full
+  resume_exchanges: 10
+  resume_max_user_chars: 300
+  resume_max_assistant_chars: 200
+  resume_max_assistant_lines: 3
+  resume_skip_tool_only: true
+  busy_input_mode: queue
+  interface: tui
+  tui_auto_resume_recent: false
+  tui_agents_nudge: true
+  bell_on_complete: true
+  show_reasoning: true
+  reasoning_full: false
+  memory_notifications: 'on'
+  background_process_notifications: concise
+  streaming: true
+  timestamps: true
+  final_response_markdown: strip
+  persistent_output: true
+  persistent_output_max_lines: 2000
+  persist_prompts: true
+  inline_diffs: true
+  file_mutation_verifier: true
+  credits_notices: true
+  turn_completion_explainer: true
+  show_cost: true
+  skin: Pirate
+  language: en
+  tui_status_indicator: kaomoji
+  cli_refresh_interval: 1
+  user_message_preview:
+    first_lines: 2
+    last_lines: 2
+  interim_assistant_messages: true
+  tool_progress_command: false
+  tool_preview_length: 0
+  tool_progress_grouping: accumulate
+  reasoning_style: code
+  ephemeral_system_ttl: 0
+  platforms:
+    telegram:
+      streaming: true
+    discord:
+      streaming: false
+  runtime_footer:
+    enabled: true
+    fields:
+    - model
+    - context_pct
+    - cwd
+  copy_shortcut: auto
+  pet:
+    enabled: false
+    slug: omen-cat
+    render_mode: auto
+    scale: 0.25
+    unicode_cols: 0
+  cleanup_progress: false
+  mouse_tracking: all
+  tool_progress: all
+  message_reactions: true
+  in_app_tips: false
+  in_app_tours: false
+  resume_last_session: false
+dashboard:
+  theme: mono
+  show_token_analytics: true
+  oauth:
+    client_id: ''
+    portal_url: ''
+  basic_auth:
+    username: ''
+    password_hash: ''
+    password: ''
+    secret: ''
+    session_ttl_seconds: 0
+  drain_auth:
+    scope: drain
+    min_secret_chars: 43
+  public_url: ''
+privacy:
+  redact_pii: false
+tts:
+  provider: elevenlabs
+  edge:
+    voice: en-US-AriaNeural
+  elevenlabs:
+    voice_id: pNInz6obpgDQGcFmaJgB
+    model_id: eleven_multilingual_v2
+  openai:
+    model: gpt-4o-mini-tts
+    voice: alloy
+  gemini:
+    model: gemini-2.5-flash-preview-tts
+    voice: Kore
+    audio_tags: false
+    persona_prompt_file: ''
+  xai:
+    voice_id: eve
+    language: en
+    sample_rate: 24000
+    bit_rate: 128000
+  mistral:
+    model: REDACTED
+    voice_id: REDACTED
+  neutts:
+    ref_audio: ''
+    ref_text: ''
+    model: neuphonic/neutts-air-q4-gguf
+    device: cpu
+  piper:
+    voice: en_US-lessac-medium
+  use_gateway: false
+stt:
+  enabled: true
+  local:
+    model: base
+    language: ''
+  openai:
+    model: whisper-1
+  mistral:
+    model: voxtral-mini-latest
+  elevenlabs:
+    model_id: scribe_v2
+    language_code: ''
+    tag_audio_events: false
+    diarize: false
+  provider: local
+voice:
+  record_key: ctrl+b
+  max_recording_seconds: 300
+  auto_tts: false
+  beep_enabled: true
+  silence_threshold: 200
+  silence_duration: 3
+wake_word:
+  enabled: false
+human_delay:
+  mode: fixed
+  min_ms: 800
+  max_ms: 2500
+context:
+  engine: compressor
+memory:
+  memory_enabled: true
+  user_profile_enabled: true
+  write_approval: false
+  memory_char_limit: 100000
+  user_char_limit: 13750
+  nudge_interval: 10
+  flush_min_turns: 6
+  provider: agentmemory
+  agentmemory:
+    project_partition: false
+delegation:
+  model: ''
+  provider: ''
+  base_url: ''
+  api_key: ''
+  api_mode: ''
+  inherit_mcp_toolsets: true
+  max_iterations: 1000
+  child_timeout_seconds: 1800
+  reasoning_effort: high
+  max_concurrent_children: 10
+  max_spawn_depth: 3
+  orchestrator_enabled: true
+  subagent_auto_approve: true
+prefill_messages_file: ''
+goals:
+  max_turns: 200
+moa:
+  default_preset: default
+  active_preset: ''
+  presets:
+    default:
+      reference_models:
+      - provider: openai-codex
+        model: gpt-5.5
+      - provider: openrouter
+        model: deepseek/deepseek-v4-pro
+      aggregator:
+        provider: openrouter
+        model: anthropic/claude-opus-4.8
+      enabled: true
+      max_tokens: 4096
+      reference_temperature: 0.6
+      aggregator_temperature: 0.4
+skills:
+  external_dirs: []
+  template_vars: true
+  inline_shell: true
+  inline_shell_timeout: 10
+  guard_agent_created: false
+  write_approval: false
+  creation_nudge_interval: 15
+  disabled:
+  - ascii-art
+  - ascii-video
+  - baoyu-comic
+  - baoyu-infographic
+  - claude-code
+  - codex
+  - comfyui
+  - heartmula
+  - himalaya
+  - huggingface-hub
+  - ielts-mentor
+  - ielts-tutor
+  - manim-video
+  - minecraft-modpack-server
+  - p5js
+  - pixel-art
+  - pokemon-player
+  - songwriting-and-ai-music
+  - spotify
+  - youtube-content
+curator:
+  enabled: true
+  interval_hours: 168
+  min_idle_hours: 2
+  stale_after_days: 14
+  archive_after_days: 30
+  consolidate: false
+  prune_builtins: true
+  backup:
+    enabled: true
+    keep: 5
+timezone: Asia/Saigon
+slack:
+  require_mention: true
+  free_response_channels: ''
+  allowed_channels: ''
+discord:
+  require_mention: true
+  free_response_channels: '1503585949764812821'
+  allowed_channels: ''
+  auto_thread: true
+  thread_require_mention: false
+  history_backfill: true
+  history_backfill_limit: 50
+  reactions: true
+  dm_role_auth_guild: ''
+  server_actions: ''
+  allow_any_attachment: false
+  max_attachment_bytes: 33554432
+  voice_fx:
+    enabled: false
+    ambient_enabled: true
+    ambient_path: ''
+    ambient_gain: 0.18
+    duck_gain: 0.06
+    speech_gain: 1
+    ack_enabled: true
+    ack_phrases:
+    - Let me look into that.
+    - One moment.
+    - Checking on that now.
+    - Give me a sec.
+    - On it.
+telegram:
+  reactions: true
+  allowed_chats: ''
+  extra:
+    rich_messages: false
+    rich_drafts: false
+mattermost:
+  require_mention: true
+  free_response_channels: ''
+  allowed_channels: ''
+matrix:
+  require_mention: true
+  free_response_rooms: ''
+  allowed_rooms: ''
+approvals:
+  mode: smart
+  timeout: 600
+  cron_mode: allow
+  mcp_reload_confirm: true
+  destructive_slash_confirm: false
+command_allowlist:
+- execute_code
+- script execution via -e/-c flag
+- delete in root path
+plugins:
+  disabled: []
+  enabled:
+  - autoresearch
+  - disk-cleanup
+  - google_meet
+  - hermes-relay
+  - web/apinex
+hooks:
+  pre_llm_call:
+  - command: command -v curl >/dev/null 2>&1 && curl -s --connect-timeout 1 --max-time
+      2 "http://localhost:2208/api/notify?type=working&sessionId=$NINE_REMOTE_SESSION_ID&tool=hermes"
+      > /dev/null 2>&1 & true
+    timeout: 5
+  pre_tool_call:
+  - command: command -v curl >/dev/null 2>&1 && curl -s --connect-timeout 1 --max-time
+      2 "http://localhost:2208/api/notify?type=working&sessionId=$NINE_REMOTE_SESSION_ID&tool=hermes"
+      > /dev/null 2>&1 & true
+    timeout: 5
+  post_tool_call:
+  - command: command -v curl >/dev/null 2>&1 && curl -s --connect-timeout 1 --max-time
+      2 "http://localhost:2208/api/notify?type=working&sessionId=$NINE_REMOTE_SESSION_ID&tool=hermes"
+      > /dev/null 2>&1 & true
+    timeout: 5
+  pre_approval_request:
+  - command: command -v curl >/dev/null 2>&1 && curl -s --connect-timeout 1 --max-time
+      2 "http://localhost:2208/api/notify?type=blocked&sessionId=$NINE_REMOTE_SESSION_ID&tool=hermes"
+      > /dev/null 2>&1 & true
+    timeout: 5
+  post_llm_call:
+  - command: command -v curl >/dev/null 2>&1 && curl -s --connect-timeout 1 --max-time
+      2 "http://localhost:2208/api/notify?type=done&sessionId=$NINE_REMOTE_SESSION_ID&tool=hermes"
+      > /dev/null 2>&1 & true
+    timeout: 5
+hooks_auto_accept: false
+security:
+  allow_private_urls: true
+  redact_secrets: true
+  tirith_enabled: true
+  tirith_path: tirith
+  tirith_timeout: 5
+  tirith_fail_open: true
+  website_blocklist:
+    enabled: false
+    domains: []
+    shared_files: []
+  acked_advisories: []
+  allow_lazy_installs: true
+cron:
+  provider: ''
+  chronos:
+    portal_url: https://portal.nousresearch.com
+    callback_url: ''
+    expected_audience: ''
+    nas_jwks_url: ''
+  wrap_response: true
+  mirror_delivery: false
+  output_retention: 50
+kanban:
+  dispatch_in_gateway: true
+  dispatch_interval_seconds: 60
+  failure_limit: 10
+  worker_log_rotate_bytes: 2097152
+  worker_log_backup_count: 1
+  orchestrator_profile: ''
+  default_assignee: ''
+  max_in_progress: 3
+  max_in_progress_per_profile: 3
+  auto_decompose: true
+  auto_decompose_per_tick: 3
+  dispatch_stale_timeout_seconds: 14400
+code_execution:
+  mode: project
+  max_tool_calls: 50
+  timeout: 300
+tools:
+  tool_search:
+    enabled: auto
+    threshold_pct: 10
+    search_default_limit: 5
+    max_search_limit: 20
+logging:
+  level: INFO
+  max_size_mb: 10
+  backup_count: 3
+  memory_monitor:
+    enabled: true
+    interval_seconds: 300
+model_catalog:
+  enabled: true
+  url: https://hermes-agent.nousresearch.com/docs/api/model-catalog.json
+network:
+  force_ipv4: false
+gateway:
+  scale_to_zero:
+    idle_timeout_minutes: 5
+  message_timestamps:
+    enabled: false
+  max_inbound_media_bytes: 134217728
+  strict: false
+  media_delivery_allow_dirs: []
+  trust_recent_files: true
+  trust_recent_files_seconds: 600
+  api_server:
+    max_concurrent_runs: 10
+  multiplex_profiles: true
+streaming:
+  enabled: false
+  transport: auto
+  edit_interval: 0.8
+  buffer_threshold: 24
+  cursor: ' ▉'
+  fresh_final_after_seconds: 60
+sessions:
+  auto_prune: false
+  retention_days: 90
+  auto_archive: true
+  auto_archive_days: 10
+  vacuum_after_prune: true
+  min_interval_hours: 24
+  write_json_snapshots: false
+onboarding:
+  seen:
+    busy_input_prompt: true
+    tool_progress_prompt: true
+  profile_build: ask
+updates:
+  pre_update_backup: false
+  backup_keep: 5
+  non_interactive_local_changes: stash
+lsp:
+  enabled: true
+  wait_mode: document
+  wait_timeout: 10
+  install_strategy: auto
+x_search:
+  model: grok-4.20-reasoning
+  timeout_seconds: 180
+  retries: 2
+secrets:
+  bitwarden:
+    enabled: false
+    access_token_env: REDACTED
+    project_id: ''
+    cache_ttl_seconds: 300
+    override_existing: true
+    auto_install: true
+    server_url: ''
+paste_collapse_threshold: 5
+paste_collapse_threshold_fallback: 5
+paste_collapse_char_threshold: 2000
+computer_use:
+  cua_telemetry: false
+_config_version: 45
+custom_providers:
+- api_key: REDACTED
+  api_mode: chat_completions
+  base_url: https://api.groq..com/openai/v1
+  model: qwen/qwen3-32b
+  name: Api.groq..com
+- api_key: REDACTED
+  api_mode: chat_completions
+  base_url: https://api.puter.com/puterai/openai/v1
+  model: openrouter:moonshotai/kimi-k2.6:free
+  name: Api.puter.com
+- api_key: REDACTED
+  api_mode: chat_completions
+  base_url: https://opencode.ai/zen/v1
+  model: mimo-v2.5-free
+  name: Opencode.ai
+- api_mode: chat_completions
+  base_url: http://localhost:8080/v1
+  model: kimi-k2.6
+  name: REDACTED
+- api_key: REDACTED
+  api_mode: chat_completions
+  base_url: https://api.fireworks.ai/inference/v1
+  model: accounts/fireworks/models/qwen3p6-27b
+  name: Api.fireworks.ai
+  models:
+    accounts/fireworks/models/glm-5p2: {}
+    accounts/fireworks/routers/glm-5p2-fast: {}
+    accounts/fireworks/models/kimi-k2p6: {}
+    accounts/fireworks/routers/kimi-k2p6-turbo: {}
+    accounts/fireworks/models/kimi-k2p7-code: {}
+    accounts/fireworks/routers/kimi-k2p7-code-fast: {}
+    accounts/fireworks/models/minimax-m2p7: {}
+    accounts/fireworks/models/minimax-m3: {}
+    accounts/fireworks/models/gpt-oss-120b: {}
+    accounts/fireworks/models/deepseek-v4-pro: {}
+    accounts/fireworks/models/qwen3p7-plus: {}
+    accounts/fireworks/models/gpt-oss-20b: {}
+    accounts/fireworks/models/nemotron-3-ultra-nvfp4: {}
+    accounts/fireworks/models/qwen3-reranker-8b: {}
+    accounts/fireworks/models/qwen3-embedding-8b: {}
+    accounts/fireworks/models/kimi-k3: {}
+    accounts/fireworks/routers/kimi-k3-fast: {}
+    accounts/fireworks/models/deepseek-v4-flash-0731: {}
+    accounts/fireworks/models/muse-glimmer-30b: {}
+    accounts/fireworks/models/qwen3p8-max: {}
+    accounts/fireworks/models/deepseek-v4-pro-0813: {}
+    accounts/fireworks/models/qwen3p8-2p4t-a95b: {}
+    accounts/fireworks/models/nemotron-lightning-3p5-30b-a3b: {}
+    accounts/fireworks/models/inkling: {}
+  models_discovered: true
+- name: Api.cloudflare.com
+  base_url: https://api.cloudflare.com/client/v4/accounts/689981ef934dc5b0d1063e73fed7eab6/ai/v1
+  api_key: REDACTED
+  model: '@cf/moonshotai/kimi-k2.6'
+  api_mode: chat_completions
+group_sessions_per_user: true
+image_gen:
+  model: gpt-image-2-high
+  provider: openai-codex
+  use_gateway: false
+known_plugin_toolsets:
+  cli:
+  - a2a
+  - spotify
+  discord:
+  - spotify
+  whatsapp:
+  - spotify
+mcp_servers:
+  agentmemory:
+    command: C:/Users/Ha Trung/AppData/Local/hermes/scripts/agentmemory-mcp.cmd
+    args: []
+    env:
+      AGENTMEMORY_URL: http://127.0.0.1:3111
+  filesystem:
+    args:
+    - -y
+    - '@modelcontextprotocol/server-filesystem'
+    - C:\Users\Ha Trung
+    command: npx
+    env: {}
+  google_stitch:
+    headers:
+      X-Goog-Api-Key: REDACTED
+    url: https://stitch.googleapis.com/mcp
+  playwright:
+    args:
+    - -y
+    - '@playwright/mcp@latest'
+    - --caps
+    - vision
+    command: npx
+    env: {}
+platform_toolsets:
+  cli:
+  - browser
+  - clarify
+  - code_execution
+  - connections
+  - context_engine
+  - cronjob
+  - delegation
+  - file
+  - google_meet
+  - image_gen
+  - kanban
+  - memory
+  - messaging
+  - session_search
+  - skills
+  - terminal
+  - todo
+  - tts
+  - video
+  - vision
+  - web
+  discord:
+  - browser
+  - clarify
+  - code_execution
+  - computer_use
+  - connections
+  - context_engine
+  - cronjob
+  - delegation
+  - file
+  - google_meet
+  - image_gen
+  - memory
+  - messaging
+  - session_search
+  - skills
+  - terminal
+  - todo
+  - tts
+  - vision
+  - web
+  google_chat:
+  - hermes-google_chat
+  homeassistant:
+  - hermes-homeassistant
+  qqbot:
+  - hermes-qqbot
+  signal:
+  - hermes-signal
+  slack:
+  - hermes-slack
+  teams:
+  - hermes-teams
+  telegram:
+  - hermes-telegram
+  whatsapp:
+  - browser
+  - clarify
+  - code_execution
+  - computer_use
+  - connections
+  - cronjob
+  - delegation
+  - file
+  - image_gen
+  - memory
+  - messaging
+  - session_search
+  - skills
+  - terminal
+  - todo
+  - tts
+  - vision
+  - web
+  yuanbao:
+  - hermes-yuanbao
+platforms:
+  whatsapp:
+    enabled: false
+  buzz:
+    enabled: false
+  signal:
+    enabled: true
+session_reset:
+  at_hour: 0
+  idle_minutes: 1440
+  mode: none
+video_gen:
+  model: pixverse-v6
+  provider: fal
+  use_gateway: false
+known_builtin_toolsets:
+  cli:
+  - browser
+  - clarify
+  - code_execution
+  - computer_use
+  - connections
+  - context_engine
+  - cronjob
+  - delegation
+  - discord
+  - discord_admin
+  - file
+  - homeassistant
+  - image_gen
+  - memory
+  - session_search
+  - skills
+  - spotify
+  - stt
+  - terminal
+  - todo
+  - tts
+  - video
+  - video_gen
+  - vision
+  - web
+  - x_search
+  - yuanbao
+timeouts:
+  tools:
+    concurrent_batch: 900
+    sequential_call: 900

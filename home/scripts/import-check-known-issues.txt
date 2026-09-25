@@ -1,0 +1,11 @@
+# Known-benign stale-import keys for check-moved-imports.py
+# Format: <target-module-path-relative-to-repo>:<imported-name>
+# Each entry verified to RESOLVE AT RUNTIME (importlib probe) — the static
+# checker can't see these bindings because they arrive through dynamic
+# mechanisms (module __getattr__ tables, exec'd namespace updates, etc.).
+
+# server.py serves these via a dynamic re-export block (runtime-probed 2026-09-08)
+tui_gateway/server.py:resolve_skin
+tui_gateway/server.py:install_exit_flush_signal_handlers
+# web_server_chat.py re-exports the PTY error class dynamically
+hermes_cli/web_server_chat.py:PtyUnavailableError

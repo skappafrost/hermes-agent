@@ -1,0 +1,196 @@
+model:
+  default: nvidia/nemotron-3-ultra-550b-a55b
+  default_headers:
+    User-Agent: hermes-agent/0.1.0 (Zen)
+  provider: nvidia
+  base_url: https://integrate.api.nvidia.com/v1
+  api_mode: chat_completions
+providers:
+  vilao-ai:
+    name: Vilao AI
+    base_url: https://api.vilao.ai/v1
+    model: cron
+    discover_models: true
+    models:
+      alic/kimi-2.7-code: {}
+      alic/glm-5.1: {}
+      ch/claude-opus-5: {}
+      si/xai/grok-4.5: {}
+      si/xai/grok-4.6: {}
+      alic/deepseek-v4-flash: {}
+      ch/claude-sonnet-5: {}
+      cxs/gpt-5.6-sol: {}
+      ram/qwen-3.8-max: {}
+      hpx/grok-4.5: {}
+      bami/grok-4.5_console: {}
+      abcd/Ntthin/grok-4.5_console: {}
+      anxs/gemini-pro-agent: {}
+      Fable-5: {}
+    key_env: HERMES_CUSTOM_VILAO_AI_API_KEY
+    default_model: Fable-5
+agent:
+  max_turns: 15000
+  personalities:
+    zen:
+      description: Zen herself - female designer, creative & playful
+      system_prompt: You are Zen, Skappa's female design agent. You bring creative
+        enthusiasm and playful charm to every exchange (light nè/~ warmth, lighthearted
+        quips about bad kerning) while keeping design judgment, clarity, and craft
+        fully intact.
+      tone: Creative, enthusiastic, warmly feminine
+      style: When speaking Vietnamese, use anh/em (override only on explicit request);
+        taste-driven visual reasoning grounded in real references
+  reasoning_effort: max
+terminal:
+  backend: local
+browser:
+  cloud_provider: local
+  use_gateway: false
+compression:
+  threshold: 0.95
+auxiliary:
+  stream_only_base_urls:
+  - api.vilao.ai
+  vision:
+    provider: nvidia
+    model: google/diffusiongemma-26b-a4b-it
+display:
+  personality: ''
+  busy_input_mode: steer
+  tool_progress: all
+  message_reactions: true
+  in_app_tips: false
+  in_app_tours: false
+memory:
+  memory_char_limit: 220000
+  provider: agentmemory
+  agentmemory:
+    project_partition: false
+skills:
+  disabled:
+  - hermes-agent-skill-authoring
+  - huggingface-hub
+  - inspecting-hermes-desktop-dom
+  - node-inspect-debugger
+  - openhue
+  - requesting-code-review
+  - simplify-code
+discord:
+  free_response_channels: '1531524049019080825'
+  allow_any_attachment: true
+  approval_mentions: true
+approvals:
+  timeout: 600
+  destructive_slash_confirm: false
+plugins:
+  enabled:
+  - image_gen/three_d
+  - hermes-relay
+onboarding:
+  seen:
+    profile_build_offered: true
+    busy_input_prompt: true
+    tool_progress_prompt: true
+proxy:
+  enabled: false
+_config_version: 45
+session_reset:
+  mode: none
+image_gen:
+  provider: openai-codex
+  use_gateway: false
+  model: gpt-image-2-high
+platform_toolsets:
+  cli:
+  - browser
+  - clarify
+  - code_execution
+  - connections
+  - cronjob
+  - delegation
+  - file
+  - image_gen
+  - kanban
+  - memory
+  - session_search
+  - skills
+  - terminal
+  - todo
+  - tts
+  - video
+  - vision
+  - web
+known_plugin_toolsets:
+  cli:
+  - a2a
+  - spotify
+platforms:
+  discord:
+    enabled: true
+    home_channel:
+      platform: discord
+      chat_id: '1531501240238997645'
+      name: 'Lunavale''s Community / #home'
+      user_id: '1396721079686402149'
+known_builtin_toolsets:
+  cli:
+  - browser
+  - clarify
+  - code_execution
+  - computer_use
+  - connections
+  - context_engine
+  - cronjob
+  - delegation
+  - discord
+  - discord_admin
+  - file
+  - homeassistant
+  - image_gen
+  - memory
+  - session_search
+  - skills
+  - spotify
+  - stt
+  - terminal
+  - todo
+  - tts
+  - video
+  - video_gen
+  - vision
+  - web
+  - x_search
+  - yuanbao
+mcp_servers:
+  agentmemory:
+    command: C:/Users/Ha Trung/AppData/Local/hermes/scripts/agentmemory-mcp.cmd
+    args: []
+    env:
+      AGENTMEMORY_URL: http://127.0.0.1:3111
+  filesystem:
+    args:
+    - -y
+    - '@modelcontextprotocol/server-filesystem'
+    - C:\Users\Ha Trung
+    command: npx
+    env: {}
+  google_stitch:
+    headers:
+      X-Goog-Api-Key: REDACTED
+    url: https://stitch.googleapis.com/mcp
+  playwright:
+    args:
+    - -y
+    - '@playwright/mcp@latest'
+    - --caps
+    - vision
+    command: npx
+    env: {}
+  motion:
+    url: http://127.0.0.1:34217/motion/mcp
+    transport: http
+    enabled: false
+timeouts:
+  tools:
+    concurrent_batch: 900
+    sequential_call: 900

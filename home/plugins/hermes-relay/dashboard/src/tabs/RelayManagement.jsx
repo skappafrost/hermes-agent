@@ -1,0 +1,778 @@
+const SDK = window.__HERMES_PLUGIN_SDK__;
+const { React } = SDK;
+const { useState, useEffect, useCallback } = SDK.hooks;
+
+import {
+  getAgentContext,
+  getOverview,
+  getPhoneConfig,
+  getSessions,
+  getUpdateCheck,
+  putEnvSetting,
+  revokeSession,
+} from "../lib/api.js";
+import { relativeTime, ttlCountdown, uptime, shortToken } from "../lib/formatters.js";
+import { formatSessionExpiry } from "../lib/session-expiry.mjs";
+import PairDialog from "../components/PairDialog.jsx";
+import {
+  Alert,
+  AlertTitle,
+  AlertDescription,
+  CardDescription,
+  Button,
+  Badge,
+  Switch,
+  Table,
+  TableHeader,
+  TableBody,
+  TableRow,
+  TableHead,
+  TableCell,
+} from "../lib/ui-shims.jsx";
+
+const {
+  Card,
+  CardHeader,
+  CardTitle,
+  CardContent,
+  Input,
+  Label,
+} = SDK.components;
+
+const AGENT_CONTEXT_MASTER_KEY = "RELAY_AGENT_CONTEXT_ENABLED";
+const AGENT_CONTEXT_MEDIA_KEY = "RELAY_CONTEXT_MEDIA_SENSITIVITY";
+
+// Mirror plugin/config.py strict_bool: recognized true tokens → true, anything
+// else → false, and UNSET (undefined/null) → the default. These gates default
+// ON, so an absent env var must read as enabled (not a stale "off").
+const AGENT_CONTEXT_TRUE_TOKENS = new Set(["1", "true", "yes", "on"]);
+function coerceAgentContextFlag(value, dflt) {
+  if (value === undefined || value === null) return dflt;
+  return AGENT_CONTEXT_TRUE_TOKENS.has(String(value).trim().toLowerCase());
+}
+
+function valueText(value) {
+  if (value === null || value === undefined) return "";
+  if (Array.isArray(value)) return value.join(" ");
+  if (typeof value === "object") return Object.keys(value).join(" ");
+  return String(value);
+}
+
+const GRANT_ORDER = {
+  chat: 0,
+  bridge: 10,
+  terminal: 20,
+  tui: 30,
+  "voice:config": 40,
+  "voice:stt": 41,
+  "voice:tts": 42,
+};
+
+function grantSortKey(name) {
+  const normalized = String(name || "").toLowerCase();
+  return Object.prototype.hasOwnProperty.call(GRANT_ORDER, normalized)
+    ? GRANT_ORDER[normalized]
+    : 100;
+}
+
+function formatGrantName(name) {
+  const normalized = String(name || "").toLowerCase();
+  switch (normalized) {
+    case "chat":
+      return "Chat";
+    case "bridge":
+      return "Bridge";
+    case "terminal":
+      return "Terminal";
+    case "tui":
+      return "TUI";
+    case "voice:config":
+      return "Voice config";
+    case "voice:stt":
+      return "Voice STT";
+    case "voice:tts":
+      return "Voice TTS";
+    default:
+      return String(name || "");
+  }
+}
+
+function sortGrants(grants) {
+  return grants.sort((left, right) => {
+    const byKnownOrder = grantSortKey(left.name) - grantSortKey(right.name);
+    return byKnownOrder || String(left.name).localeCompare(String(right.name));
+  });
+}
+
+function extractGrants(session) {
+  const raw = session && session.grants;
+  if (Array.isArray(raw)) {
+    const grants = raw
+      .map((entry) => {
+        if (typeof entry === "string") return { name: entry, detail: "" };
+        if (!entry || typeof entry !== "object") return null;
+        const name = entry.name || entry.channel || entry.grant || entry.scope;
+        if (!name) return null;
+        return {
+          name: String(name),
+          detail: entry.expires_at
+            ? ttlCountdown(entry.expires_at)
+            : formatGrantValue(entry.ttl_seconds ?? entry.ttl ?? entry.seconds),
+        };
+      })
+      .filter(Boolean);
+    return sortGrants(grants);
+  }
+  if (raw && typeof raw === "object") {
+    return sortGrants(Object.entries(raw).map(([name, value]) => ({
+      name,
+      detail:
+        value && typeof value === "object"
+          ? value.expires_at || value.expiresAt || value.until
+            ? ttlCountdown(value.expires_at || value.expiresAt || value.until)
+            : formatGrantValue(value.ttl_seconds ?? value.ttl ?? value.seconds)
+          : formatGrantValue(value),
+    })));
+  }
+  return [];
+}
+
+function formatGrantValue(value) {
+  if (value === null || value === undefined || value === "" || value === true) return "";
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds) || seconds <= 0) return "";
+  return seconds > 1e9 ? ttlCountdown(seconds) : formatDuration(seconds);
+}
+
+function formatDuration(value) {
+  if (value === null || value === undefined || value === "" || value === true) return "";
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds) || seconds <= 0) return "";
+  if (seconds < 60) return `${Math.floor(seconds)}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const remMinutes = minutes % 60;
+  if (hours < 24) return remMinutes ? `${hours}h ${remMinutes}m` : `${hours}h`;
+  const days = Math.floor(hours / 24);
+  const remHours = hours % 24;
+  return remHours ? `${days}d ${remHours}h` : `${days}d`;
+}
+
+function classifySession(session, grants) {
+  const haystack = [
+    session.device_type,
+    session.client_type,
+    session.platform,
+    session.device_platform,
+    session.device_model,
+    session.client_surface,
+    session.device_form_factor,
+    session.device_name,
+    session.device_label,
+    session.client_name,
+    session.label,
+    session.transport,
+    session.transport_hint,
+    session.channel,
+    valueText(session.capabilities),
+    grants.map((g) => g.name).join(" "),
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  if (/\bandroid\b|\bmobile\b|\bphone\b|hermes-relay-android/.test(haystack)) {
+    return "Android";
+  }
+  if (/\btui\b|terminal-ui|textual/.test(haystack)) {
+    return "Desktop TUI";
+  }
+  if (/\bcli\b|terminal|shell|desktop|tool|powershell|bash|cmd\.exe/.test(haystack)) {
+    return "Desktop CLI";
+  }
+  if (/\bweb\b|\bbrowser\b|\bdashboard\b/.test(haystack)) {
+    return "Dashboard";
+  }
+  return "Client";
+}
+
+function sessionTransport(session) {
+  return (
+    session.transport_hint ||
+    session.transport ||
+    session.channel ||
+    session.connection ||
+    session.protocol ||
+    ""
+  );
+}
+
+function sessionTokenPrefix(session) {
+  const raw = session.token || session.session_token || "";
+  return (
+    session.token_prefix ||
+    session.prefix ||
+    session.tokenPrefix ||
+    session.session_prefix ||
+    (raw ? String(raw).slice(0, 12) : "")
+  );
+}
+
+function StatCard({ label, value, hint }) {
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardDescription>{label}</CardDescription>
+        <CardTitle className="text-2xl">{value}</CardTitle>
+      </CardHeader>
+      {hint ? (
+        <CardContent className="pt-0 text-xs text-muted-foreground">{hint}</CardContent>
+      ) : null}
+    </Card>
+  );
+}
+
+function ToggleRow({ id, title, description, checked, disabled, onChange }) {
+  return (
+    <div className="flex items-start justify-between gap-3 rounded-md border border-border/70 p-3">
+      <div className="space-y-1">
+        <Label htmlFor={id} className="text-sm font-medium">
+          {title}
+        </Label>
+        {description ? (
+          <div className="text-xs text-muted-foreground">{description}</div>
+        ) : null}
+      </div>
+      <Switch
+        id={id}
+        checked={checked}
+        disabled={disabled}
+        onCheckedChange={onChange}
+      />
+    </div>
+  );
+}
+
+function AgentContextCard({ data, saving, onToggle }) {
+  const settings = (data && data.settings) || {};
+  const injected = (data && data.injected) || {};
+  const blocks = Array.isArray(injected.blocks) ? injected.blocks : [];
+  const masterEnabled = coerceAgentContextFlag(settings[AGENT_CONTEXT_MASTER_KEY], true);
+  const mediaEnabled = coerceAgentContextFlag(settings[AGENT_CONTEXT_MEDIA_KEY], true);
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Agent context</CardTitle>
+        <CardDescription>
+          On by default for relay installs — injects an instruction into the agent's system
+          prompt (server-side) so it can mark sensitive media. Turn off to opt out; removable
+          by uninstalling the relay plugin.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <ToggleRow
+          id="relay-agent-context-enabled"
+          title="Enable Agent context injection"
+          description="Master toggle for relay-owned server-side prompt blocks."
+          checked={masterEnabled}
+          disabled={saving === AGENT_CONTEXT_MASTER_KEY}
+          onChange={(value) => onToggle(AGENT_CONTEXT_MASTER_KEY, value)}
+        />
+        <ToggleRow
+          id="relay-context-media-sensitivity"
+          title="Media sensitivity block"
+          description="Ask the agent to mark private, NSFW, or spoiler media with client-visible sensitivity markers."
+          checked={mediaEnabled}
+          disabled={saving === AGENT_CONTEXT_MEDIA_KEY}
+          onChange={(value) => onToggle(AGENT_CONTEXT_MEDIA_KEY, value)}
+        />
+        <div className="rounded-md border border-border/70 p-3">
+          <div className="text-sm font-medium">Server-side audit</div>
+          <div className="mt-1 text-xs text-muted-foreground">
+            {injected.enabled ? "Context injection enabled." : "Context injection disabled."}
+          </div>
+          {blocks.length === 0 ? (
+            <div className="mt-2 text-xs text-muted-foreground">
+              No blocks would be injected on the next turn.
+            </div>
+          ) : (
+            <div className="mt-2 space-y-2">
+              {blocks.map((block) => (
+                <div key={block.name} className="rounded-md bg-muted/40 p-2">
+                  <div className="text-xs font-medium">{block.name}</div>
+                  <pre className="mt-1 whitespace-pre-wrap text-xs text-muted-foreground">
+                    {block.text}
+                  </pre>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function HomeChannelCard({ config, onSaved }) {
+  // Lazy-init the draft from the loaded name. The card is keyed by the loaded
+  // name at the call site, so it remounts (re-seeding the draft) only when the
+  // server value actually changes — autorefresh won't clobber active typing.
+  const [draft, setDraft] = useState((config && config.home_channel_name) || "Phone");
+  const [saving, setSaving] = useState(false);
+  const [savedAt, setSavedAt] = useState(null);
+  const [error, setError] = useState(null);
+
+  const chatId = (config && config.home_channel_id) || "phone";
+  const envKey = (config && config.name_env_key) || "PHONE_HOME_CHANNEL_NAME";
+
+  const save = useCallback(async () => {
+    const name = draft.trim();
+    if (!name) {
+      setError("Display name cannot be empty.");
+      return;
+    }
+    setError(null);
+    setSaving(true);
+    try {
+      await putEnvSetting(envKey, name);
+      setSavedAt(Date.now());
+      if (onSaved) await onSaved();
+    } catch (err) {
+      setError(err && err.message ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  }, [draft, envKey, onSaved]);
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Home channel</CardTitle>
+        <CardDescription>
+          Where Hermes delivers proactive pushes, cron results, and
+          cross-platform messages when no specific Thread is named. The phone is
+          a single paired device, so this is auto-configured — you only set a
+          display name.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="space-y-1">
+          <Label htmlFor="phone-home-name">Display name</Label>
+          <Input
+            id="phone-home-name"
+            value={draft}
+            placeholder="Phone"
+            onChange={(e) => setDraft(e.target.value)}
+          />
+          <p className="text-xs text-muted-foreground">
+            Notification title and Thread label. Applies after the next gateway
+            restart.
+          </p>
+        </div>
+
+        <div className="text-xs text-muted-foreground">
+          Channel id <code className="font-mono">{chatId}</code> — fixed;
+          changing it would orphan existing Threads.
+        </div>
+
+        {error ? (
+          <div className="rounded-md border border-destructive/50 bg-destructive/10 p-2 text-xs text-destructive">
+            {error}
+          </div>
+        ) : null}
+
+        <div className="flex flex-wrap items-center gap-2">
+          <Button size="sm" onClick={save} disabled={saving || !draft.trim()}>
+            {saving ? "Saving…" : "Save"}
+          </Button>
+          {savedAt ? (
+            <span className="text-xs text-muted-foreground">
+              Saved {relativeTime(savedAt)}
+            </span>
+          ) : null}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function UpdateCheckCard({ info, onRefresh }) {
+  const [refreshing, setRefreshing] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const doRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      await onRefresh(true);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [onRefresh]);
+
+  const cmd = info && info.update_command;
+  const copyCmd = useCallback(async () => {
+    if (!cmd) return;
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(cmd);
+      } else {
+        window.prompt("Copy update command", cmd);
+      }
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    } catch (_err) {
+      window.prompt("Copy update command", cmd);
+    }
+  }, [cmd]);
+
+  if (!info) return null;
+  const current = info.current || "—";
+  const available = !!info.update_available;
+  const description = available
+    ? `Update available — you're on ${current}.`
+    : info.error
+    ? `On ${current}. Couldn't reach GitHub to check.`
+    : `On ${current}${info.latest ? ` — latest is ${info.latest}.` : "."}`;
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between space-y-0">
+        <div>
+          <CardTitle>Plugin version</CardTitle>
+          <CardDescription>{description}</CardDescription>
+        </div>
+        <Button size="sm" variant="outline" onClick={doRefresh} disabled={refreshing}>
+          {refreshing ? "Checking…" : "Check"}
+        </Button>
+      </CardHeader>
+      {available ? (
+        <CardContent className="space-y-2">
+          <Badge variant="secondary" className="w-fit text-xs">
+            {current} → {info.latest}
+          </Badge>
+          <div className="flex items-center justify-between gap-2 rounded-md border border-border/70 bg-muted/30 p-2 font-mono text-xs">
+            <span className="truncate">{cmd}</span>
+            <Button size="sm" variant="ghost" onClick={copyCmd}>
+              {copied ? "Copied" : "Copy"}
+            </Button>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Run it on your Hermes host, then restart the gateway to load the new plugin.
+          </p>
+        </CardContent>
+      ) : info.error ? (
+        <CardContent className="pt-0 text-xs text-muted-foreground">{info.error}</CardContent>
+      ) : null}
+    </Card>
+  );
+}
+
+export default function RelayManagement({ autoRefresh }) {
+  const [overview, setOverview] = useState(null);
+  const [sessions, setSessions] = useState(null);
+  const [agentContext, setAgentContext] = useState(null);
+  const [phoneConfig, setPhoneConfig] = useState(null);
+  const [updateInfo, setUpdateInfo] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [pairOpen, setPairOpen] = useState(false);
+  const [revoking, setRevoking] = useState(null);
+  const [copied, setCopied] = useState(null);
+  const [contextSaving, setContextSaving] = useState(null);
+
+  const load = useCallback(async () => {
+    setError(null);
+    try {
+      const [ov, se, ctx, phone] = await Promise.all([
+        getOverview(),
+        getSessions(),
+        getAgentContext(),
+        getPhoneConfig(),
+      ]);
+      setOverview(ov || null);
+      // Relay /sessions returns either {sessions:[...]} or [...] — handle both.
+      const list = Array.isArray(se) ? se : (se && se.sessions) || [];
+      setSessions(list);
+      setAgentContext(ctx || null);
+      setPhoneConfig(phone || null);
+    } catch (err) {
+      setError(err && err.message ? err.message : String(err));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  // Update check runs independently of the main load — a GitHub round-trip
+  // shouldn't block (or fail) the management tab. Cached server-side for an
+  // hour; the "Check" button forces a refresh.
+  const loadUpdate = useCallback(async (refresh = false) => {
+    try {
+      setUpdateInfo(await getUpdateCheck({ refresh }));
+    } catch (err) {
+      setUpdateInfo({ error: err && err.message ? err.message : String(err) });
+    }
+  }, []);
+
+  useEffect(() => {
+    loadUpdate(false);
+  }, [loadUpdate]);
+
+  useEffect(() => {
+    if (!autoRefresh) return undefined;
+    const id = setInterval(load, 10000);
+    return () => clearInterval(id);
+  }, [autoRefresh, load]);
+
+  const onRevoke = useCallback(async (prefix, label) => {
+    if (!window.confirm(
+      `Revoke paired device${label ? ` "${label}"` : ""}?\n\n` +
+      `Token prefix: ${prefix}\n\n` +
+      "The phone will need to re-pair. This cannot be undone."
+    )) return;
+    setRevoking(prefix);
+    try {
+      await revokeSession(prefix);
+      await load();
+    } catch (err) {
+      window.alert(`Revoke failed: ${err && err.message ? err.message : err}`);
+    } finally {
+      setRevoking(null);
+    }
+  }, [load]);
+
+  const onCopyPrefix = useCallback(async (prefix) => {
+    if (!prefix) return;
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(prefix);
+      } else {
+        window.prompt("Copy token prefix", prefix);
+      }
+      setCopied(prefix);
+      window.setTimeout(() => setCopied(null), 1500);
+    } catch (_err) {
+      window.prompt("Copy token prefix", prefix);
+    }
+  }, []);
+
+  const onToggleAgentContext = useCallback(async (key, checked) => {
+    setContextSaving(key);
+    try {
+      await putEnvSetting(key, checked ? "1" : "0");
+      const ctx = await getAgentContext();
+      setAgentContext(ctx || null);
+    } catch (err) {
+      window.alert(`Agent context update failed: ${err && err.message ? err.message : err}`);
+    } finally {
+      setContextSaving(null);
+    }
+  }, []);
+
+  if (loading) {
+    return <div className="text-sm text-muted-foreground">Loading overview…</div>;
+  }
+
+  if (error) {
+    return (
+      <Alert variant="destructive">
+        <AlertTitle>Relay unreachable</AlertTitle>
+        <AlertDescription>
+          <pre className="whitespace-pre-wrap text-xs">{error}</pre>
+          {!autoRefresh ? (
+            <Button className="mt-2" size="sm" variant="outline" onClick={load}>
+              Retry
+            </Button>
+          ) : null}
+        </AlertDescription>
+      </Alert>
+    );
+  }
+
+  const ov = overview || {};
+  const list = sessions || [];
+
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <StatCard label="Version" value={ov.version || "—"} hint={ov.health ? `health: ${ov.health}` : null} />
+        <StatCard label="Uptime" value={uptime(ov.uptime_seconds)} />
+        <StatCard
+          label="Paired devices"
+          value={ov.paired_device_count ?? ov.session_count ?? 0}
+          hint={ov.session_count != null ? `${ov.session_count} session(s)` : null}
+        />
+        <StatCard
+          label="Pending / media"
+          value={`${ov.pending_commands ?? 0} / ${ov.media_entry_count ?? 0}`}
+          hint="pending commands / media tokens"
+        />
+      </div>
+
+      <UpdateCheckCard info={updateInfo} onRefresh={loadUpdate} />
+
+      <AgentContextCard
+        data={agentContext}
+        saving={contextSaving}
+        onToggle={onToggleAgentContext}
+      />
+
+      {phoneConfig && phoneConfig.enabled ? (
+        <HomeChannelCard
+          key={phoneConfig.home_channel_name || "phone"}
+          config={phoneConfig}
+          onSaved={load}
+        />
+      ) : null}
+
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between space-y-0">
+          <div>
+            <CardTitle>Paired sessions</CardTitle>
+            <CardDescription>
+              Devices currently authorized against the relay.
+            </CardDescription>
+          </div>
+          <Button size="sm" onClick={() => setPairOpen(true)}>
+            Pair new device
+          </Button>
+        </CardHeader>
+        <CardContent>
+          {!autoRefresh ? (
+            <div className="mb-3">
+              <Button size="sm" variant="outline" onClick={load}>
+                Refresh
+              </Button>
+            </div>
+          ) : null}
+          {list.length === 0 ? (
+            <div className="text-sm text-muted-foreground">No paired sessions.</div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Device</TableHead>
+                  <TableHead>Type</TableHead>
+                  <TableHead>Last seen</TableHead>
+                  <TableHead>Expires</TableHead>
+                  <TableHead>Grants</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {list.map((s, idx) => {
+                  const tokenPrefix = sessionTokenPrefix(s);
+                  const label =
+                    s.device_name ||
+                    s.device_label ||
+                    s.client_name ||
+                    s.label ||
+                    shortToken(tokenPrefix);
+                  const lastSeen =
+                    s.last_seen ||
+                    s.last_activity ||
+                    s.last_seen_at ||
+                    s.last_activity_at ||
+                    s.updated_at ||
+                    s.paired_at;
+                  const expiresAt = s.expires_at ?? s.expiresAt ?? s.expires;
+                  const expiry = formatSessionExpiry(expiresAt);
+                  const grants = extractGrants(s);
+                  const type = classifySession(s, grants);
+                  const transport = sessionTransport(s);
+                  const deviceDetail = [s.device_model, s.device_platform]
+                    .filter((value) => value && value !== "unknown")
+                    .join(" · ");
+                  return (
+                    <TableRow key={tokenPrefix || idx}>
+                      <TableCell className="font-medium">
+                        <div>{label}</div>
+                        <div className="font-mono text-xs font-normal text-muted-foreground">
+                          {tokenPrefix ? shortToken(tokenPrefix, 12) : "no token prefix"}
+                        </div>
+                        {deviceDetail ? (
+                          <div className="text-xs font-normal text-muted-foreground">
+                            {deviceDetail}
+                          </div>
+                        ) : null}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex flex-col gap-1">
+                          <Badge variant="outline" className="w-fit text-xs">
+                            {type}
+                          </Badge>
+                          {transport ? (
+                            <span className="text-xs text-muted-foreground">{transport}</span>
+                          ) : null}
+                        </div>
+                      </TableCell>
+                      <TableCell>{relativeTime(lastSeen)}</TableCell>
+                      <TableCell>
+                        <div className="flex flex-col items-start gap-1">
+                          <Badge
+                            variant={expiry.expired ? "destructive" : "secondary"}
+                            className="whitespace-nowrap text-xs"
+                            title={expiry.exact ? `Expires ${expiry.exact}` : undefined}
+                          >
+                            {expiry.label}
+                          </Badge>
+                          {expiry.exact ? (
+                            <span className="whitespace-nowrap text-xs text-muted-foreground">
+                              {expiry.exact}
+                            </span>
+                          ) : null}
+                        </div>
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex flex-wrap gap-1">
+                          {grants.length === 0 ? (
+                            <span className="text-xs text-muted-foreground">—</span>
+                          ) : (
+                            grants.map((g) => (
+                              <Badge key={`${g.name}:${g.detail}`} variant="secondary" className="text-xs">
+                                {g.detail ? `${formatGrantName(g.name)} ${g.detail}` : formatGrantName(g.name)}
+                              </Badge>
+                            ))
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <div className="flex justify-end gap-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={!tokenPrefix}
+                            onClick={() => onCopyPrefix(tokenPrefix)}
+                          >
+                            {copied === tokenPrefix ? "Copied" : "Copy prefix"}
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={revoking === tokenPrefix || !tokenPrefix}
+                            onClick={() => onRevoke(tokenPrefix, label)}
+                          >
+                            {revoking === tokenPrefix ? "Revoking…" : "Revoke"}
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
+      <PairDialog
+        open={pairOpen}
+        onClose={() => { setPairOpen(false); load(); }}
+      />
+    </div>
+  );
+}

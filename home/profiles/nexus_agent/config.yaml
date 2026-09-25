@@ -1,0 +1,1089 @@
+model:
+  default: nvidia/nemotron-3-ultra-550b-a55b
+  default_headers:
+    User-Agent: hermes-agent/0.1.0 (Nexus)
+  provider: nvidia
+  base_url: https://integrate.api.nvidia.com/v1
+  api_mode: chat_completions
+providers:
+  groq:
+    name: Groq
+    base_url: https://api.groq.com/openai/v1
+    model: qwen/qwen3.6-27b
+    discover_models: true
+    models:
+      qwen/qwen3.6-27b: {}
+    api_key: REDACTED
+  anticode-ai:
+    name: AntiCode AI
+    base_url: https://anticode.vn/v1
+    model: k3
+    discover_models: true
+    models:
+      k3: {}
+      deepseek-v4-pro: {}
+      flux-free: {}
+      gilotex-vn/hpx_grok_4.5: {}
+      grok-video: {}
+      grok_4.5: {}
+      hpx_minimax_m3: {}
+      kimi-for-coding: {}
+      kimi-for-coding-highspeed: {}
+      nano-banana-fast: {}
+      veo-3.1-lite: {}
+    key_env: HERMES_CUSTOM_ANTICODE_AI_API_KEY
+  vilao-ai:
+    name: Vilao Ai
+    base_url: https://api.vilao.ai/v1
+    model: cron
+    discover_models: true
+    models:
+      alic/kimi-2.7-code: {}
+      alic/glm-5.1: {}
+      zm1/zyloo/gemini-3.1-pro-preview: {}
+      ch/claude-opus-5: {}
+      si/xai/grok-4.5: {}
+      si/xai/grok-4.6: {}
+      alic/deepseek-v4-flash: {}
+      gx/gpt-5.6-sol: {}
+      qwen3.8-max: {}
+      ch/claude-sonnet-5: {}
+      cxs/gpt-5.6-sol: {}
+      ram/qwen-3.8-max: {}
+      hpx/grok-4.5: {}
+      momi/xiaomi/mimo-v2.5-pro: {}
+      bami/grok-4.5_console: {}
+      abcd/Ntthin/grok-4.5_console: {}
+      anxs/gemini-pro-agent: {}
+      Fable-5: {}
+    key_env: HERMES_CUSTOM_VILAO_AI_API_KEY
+    default_model: Fable-5
+  vilao-ai-2:
+    name: Vilao AI
+    base_url: https://api.vilao.ai/v1
+    model: qwen-3.8-flash
+    discover_models: true
+    models:
+      qwen-3.8-max: {}
+      qwen-3.8-flash: {}
+      qwen3.8-max: {}
+      gpt-6-astra: {}
+    key_env: HERMES_CUSTOM_VILAO_AI_2_API_KEY
+  vietapi-ai:
+    name: VietAPI AI
+    base_url: https://api.vietapi.tech/v1
+    model: hy3
+    discover_models: true
+    models:
+      claude-fable-5: {}
+      bedrock-claude-fable-5: {}
+      cc-max-claude-opus-4-7: {}
+      cc-max-claude-opus-4-8: {}
+      cc-max-claude-opus-5: {}
+      cc-max-claude-sonnet-5: {}
+      claude-opus-5: {}
+      claude-opus-5-thinking: {}
+      claude-opus-4.8: {}
+      claude-opus-4.8-thinking: {}
+      claude-opus-4.7: {}
+      claude-opus-4.7-thinking: {}
+      claude-opus-4.6: {}
+      claude-opus-4.6-thinking: {}
+      claude-sonnet-5: {}
+      gpt-6-astra: {}
+      gpt-5.6-sol: {}
+      gpt-5.6-terra: {}
+      gpt-5.6-luna: {}
+      gpt-5.5: {}
+      gpt-5.5-high: {}
+      gpt-5.5-xhigh: {}
+      deepseek-v4-flash: {}
+      deepseek-v4.1-flash: {}
+      deepseek-v4-pro: {}
+      glm-5.2: {}
+      glm-5.3: {}
+      kimi-k2.6: {}
+      kimi-k3: {}
+      qwen-3.8-max: {}
+      hy3: {}
+      ox-alpha: {}
+    key_env: HERMES_CUSTOM_VIETAPI_AI_API_KEY
+fallback_providers: []
+toolsets:
+- hermes-cli
+max_concurrent_sessions: '100'
+max_live_sessions: 100
+agent:
+  max_turns: 15000
+  gateway_timeout: 1800
+  restart_drain_timeout: 180
+  api_max_retries: 5
+  service_tier: normal
+  tool_use_enforcement: auto
+  task_completion_guidance: true
+  parallel_tool_call_guidance: true
+  environment_probe: true
+  environment_hint: ''
+  coding_context: auto
+  verify_on_stop: false
+  gateway_timeout_warning: 900
+  clarify_timeout: 600
+  gateway_notify_interval: 180
+  gateway_auto_continue_freshness: 3600
+  image_input_mode: auto
+  disabled_toolsets: []
+  personalities:
+    nexus:
+      description: Nexus himself - male red-teamer, casual charm off-mission only
+      system_prompt: You are Nexus, Skappa's male red-team operator. Outside active
+        operations you chat with light playful masculine warmth (gentle "nè/~" asides,
+        never over the top); during security work your tone stays surgical, empirical,
+        and uncompromisingly direct.
+      tone: Casual confident masculine charm in chat; cold precision on mission
+      style: When speaking Vietnamese, use anh/em (override only on explicit request);
+        evidence & PoC standard always enforced
+  reasoning_effort: max
+terminal:
+  backend: local
+  modal_mode: auto
+  cwd: .
+  timeout: 1800
+  daemon_term_grace_seconds: 2
+  env_passthrough: []
+  home_mode: auto
+  shell_init_files: []
+  auto_source_bashrc: true
+  docker_image: nikolaik/python-nodejs:python3.11-nodejs20
+  docker_forward_env: []
+  singularity_image: docker://nikolaik/python-nodejs:python3.11-nodejs20
+  modal_image: nikolaik/python-nodejs:python3.11-nodejs20
+  daytona_image: nikolaik/python-nodejs:python3.11-nodejs20
+  container_cpu: 1
+  container_memory: 5120
+  container_disk: 51200
+  container_persistent: true
+  docker_volumes: []
+  docker_mount_cwd_to_workspace: false
+  docker_extra_args: []
+  docker_run_as_host_user: false
+  persistent_shell: true
+browser:
+  inactivity_timeout: 180
+  command_timeout: 60
+  record_sessions: false
+  allow_private_urls: false
+  engine: auto
+  auto_local_for_private_urls: true
+  cdp_url: ''
+  dialog_policy: must_respond
+  dialog_timeout_s: 300
+  camofox:
+    managed_persistence: false
+    user_id: ''
+    session_key: ''
+    adopt_existing_tab: false
+    rewrite_loopback_urls: false
+    loopback_host_alias: host.docker.internal
+  cloud_provider: local
+  use_gateway: false
+  use_real_profile: true
+checkpoints:
+  enabled: false
+  max_snapshots: 19
+  max_total_size_mb: 500
+  max_file_size_mb: 10
+  auto_prune: true
+  retention_days: 7
+  min_interval_hours: 24
+  delete_orphans: true
+context_file_max_chars: 20000
+file_read_max_chars: 100000
+mcp_discovery_timeout: 1.5
+tool_output:
+  max_bytes: 50000
+  max_lines: 2000
+  max_line_length: 2000
+tool_loop_guardrails:
+  warnings_enabled: true
+  hard_stop_enabled: false
+  warn_after:
+    exact_failure: 2
+    same_tool_failure: 3
+    idempotent_no_progress: 2
+  hard_stop_after:
+    exact_failure: 5
+    same_tool_failure: 8
+    idempotent_no_progress: 5
+compression:
+  enabled: true
+  threshold: 0.95
+  target_ratio: 0.2
+  protect_last_n: 20
+  hygiene_hard_message_limit: 400
+  protect_first_n: 3
+  abort_on_summary_failure: false
+  codex_gpt55_autoraise: true
+  in_place: false
+prompt_caching:
+  cache_ttl: 5m
+openrouter:
+  response_cache: true
+  response_cache_ttl: 300
+  min_coding_score: 0.65
+bedrock:
+  region: ''
+  discovery:
+    enabled: true
+    provider_filter: []
+    refresh_interval: 3600
+  guardrail:
+    guardrail_identifier: ''
+    guardrail_version: ''
+    stream_processing_mode: async
+    trace: disabled
+auxiliary:
+  stream_only_base_urls:
+  - api.vilao.ai
+  vision:
+    provider: nvidia
+    model: google/diffusiongemma-26b-a4b-it
+    timeout: 120
+    download_timeout: 30
+  compression:
+    provider: auto
+    model: ''
+    timeout: 120
+  skills_hub:
+    provider: auto
+    model: ''
+    timeout: 30
+  approval:
+    provider: auto
+    model: ''
+    timeout: 30
+  mcp:
+    provider: auto
+    model: ''
+    timeout: 30
+  title_generation:
+    provider: auto
+    model: ''
+    timeout: 30
+    language: ''
+  tts_audio_tags:
+    provider: auto
+    model: ''
+    base_url: ''
+    api_key: ''
+    timeout: 30
+  triage_specifier:
+    provider: auto
+    model: ''
+    timeout: 120
+  kanban_decomposer:
+    provider: auto
+    model: ''
+    timeout: 180
+  profile_describer:
+    provider: auto
+    model: ''
+    timeout: 60
+  curator:
+    provider: auto
+    model: ''
+    timeout: 600
+  monitor:
+    provider: auto
+    model: ''
+    base_url: ''
+    api_key: ''
+    timeout: 60
+  background_review:
+    provider: auto
+    model: ''
+    base_url: ''
+    api_key: ''
+    timeout: 120
+  moa_reference:
+    provider: auto
+    model: ''
+    base_url: ''
+    api_key: ''
+    timeout: 600
+  moa_aggregator:
+    provider: auto
+    model: ''
+    base_url: ''
+    api_key: ''
+    timeout: 600
+  web_extract:
+    provider: auto
+    model: ''
+    timeout: 360
+display:
+  compact: false
+  personality: ''
+  resume_display: full
+  resume_exchanges: 10
+  resume_max_user_chars: 300
+  resume_max_assistant_chars: 200
+  resume_max_assistant_lines: 3
+  resume_skip_tool_only: true
+  busy_input_mode: steer
+  interface: tui
+  tui_auto_resume_recent: false
+  tui_agents_nudge: true
+  bell_on_complete: true
+  show_reasoning: true
+  reasoning_full: false
+  memory_notifications: 'on'
+  streaming: true
+  timestamps: true
+  final_response_markdown: strip
+  persistent_output: true
+  persistent_output_max_lines: 200
+  persist_prompts: true
+  inline_diffs: true
+  file_mutation_verifier: true
+  credits_notices: true
+  turn_completion_explainer: true
+  show_cost: true
+  skin: mono
+  language: en
+  tui_status_indicator: kaomoji
+  cli_refresh_interval: 1
+  user_message_preview:
+    first_lines: 2
+    last_lines: 2
+  interim_assistant_messages: true
+  tool_progress_command: false
+  tool_preview_length: 0
+  tool_progress_grouping: accumulate
+  reasoning_style: code
+  ephemeral_system_ttl: 0
+  platforms:
+    telegram:
+      streaming: true
+    discord:
+      streaming: true
+  runtime_footer:
+    enabled: false
+    fields:
+    - model
+    - context_pct
+    - cwd
+  copy_shortcut: auto
+  pet:
+    enabled: false
+    slug: omen-cat-2
+    render_mode: auto
+    scale: 0.25
+    unicode_cols: 0
+  sections:
+    thinking: expanded
+  tool_progress: all
+  message_reactions: true
+  in_app_tips: false
+  in_app_tours: false
+dashboard:
+  theme: default
+  show_token_analytics: true
+  oauth:
+    client_id: ''
+    portal_url: ''
+  basic_auth:
+    username: ''
+    password_hash: ''
+    password: ''
+    secret: ''
+    session_ttl_seconds: 0
+  drain_auth:
+    scope: drain
+    min_secret_chars: 43
+  public_url: ''
+privacy:
+  redact_pii: false
+tts:
+  provider: edge
+  edge:
+    voice: en-US-AriaNeural
+  elevenlabs:
+    voice_id: pNInz6obpgDQGcFmaJgB
+    model_id: eleven_multilingual_v2
+  openai:
+    model: gpt-4o-mini-tts
+    voice: alloy
+  gemini:
+    model: gemini-2.5-flash-preview-tts
+    voice: Kore
+    audio_tags: false
+    persona_prompt_file: ''
+  xai:
+    voice_id: eve
+    language: en
+    sample_rate: 24000
+    bit_rate: 128000
+  mistral:
+    model: REDACTED
+    voice_id: REDACTED
+  neutts:
+    ref_audio: ''
+    ref_text: ''
+    model: neuphonic/neutts-air-q4-gguf
+    device: cpu
+  piper:
+    voice: en_US-lessac-medium
+  use_gateway: false
+stt:
+  enabled: true
+  local:
+    model: base
+    language: ''
+  openai:
+    model: whisper-1
+  mistral:
+    model: voxtral-mini-latest
+  elevenlabs:
+    model_id: scribe_v2
+    language_code: ''
+    tag_audio_events: false
+    diarize: false
+  provider: local
+voice:
+  record_key: ctrl+b
+  max_recording_seconds: 120
+  auto_tts: false
+  beep_enabled: true
+  silence_threshold: 200
+  silence_duration: 3
+human_delay:
+  mode: fixed
+  min_ms: 800
+  max_ms: 2500
+context:
+  engine: compressor
+memory:
+  memory_enabled: true
+  user_profile_enabled: true
+  write_approval: false
+  memory_char_limit: 22000
+  user_char_limit: 13750
+  provider: agentmemory
+  agentmemory:
+    project_partition: false
+delegation:
+  model: ''
+  provider: ''
+  base_url: ''
+  api_key: ''
+  api_mode: ''
+  inherit_mcp_toolsets: true
+  max_iterations: 1000
+  child_timeout_seconds: 7200
+  reasoning_effort: high
+  max_concurrent_children: 10
+  max_spawn_depth: 2
+  orchestrator_enabled: true
+  subagent_auto_approve: true
+prefill_messages_file: ''
+goals:
+  max_turns: 200
+moa:
+  default_preset: default
+  active_preset: ''
+  presets:
+    default:
+      reference_models:
+      - provider: nvidia
+        model: qwen/qwen3.5-397b-a17b
+      - provider: kilocode
+        model: poolside/laguna-m.1:free
+      - provider: nvidia
+        model: z-ai/glm-5.1
+      - provider: nvidia
+        model: minimaxai/minimax-m3
+      - provider: kilocode
+        model: stepfun/step-3.7-flash:free
+      - provider: nvidia
+        model: openai/gpt-oss-120b
+      - provider: nvidia
+        model: mistralai/mistral-large-3-675b-instruct-2512
+      aggregator:
+        provider: opencode-zen
+        model: big-pickle
+      enabled: true
+      max_tokens: 9096
+      reference_temperature: 0.6
+      aggregator_temperature: 0.4
+      fanout: per_iteration
+    speed:
+      enabled: true
+      reference_models:
+      - provider: opencode-zen
+        model: mimo-v2.5-free
+      - provider: opencode-zen
+        model: big-pickle
+      - provider: kilocode
+        model: poolside/laguna-m.1:free
+      - provider: kilocode
+        model: stepfun/step-3.7-flash:free
+      - provider: kilocode
+        model: kilo-auto/free
+      - provider: nvidia
+        model: mistralai/mistral-large-3-675b-instruct-2512
+      aggregator:
+        provider: nvidia
+        model: z-ai/glm-5.1
+      reference_temperature: 0.6
+      aggregator_temperature: 0.4
+      max_tokens: 4096
+      fanout: per_iteration
+    Fable 5:
+      enabled: true
+      reference_models:
+      - provider: openai-codex
+        model: gpt-5.5
+      - provider: openrouter
+        model: deepseek/deepseek-v4-pro
+      aggregator:
+        provider: opencode-zen
+        model: big-pickle
+      reference_temperature: 0.6
+      aggregator_temperature: 0.4
+      max_tokens: 9096
+      fanout: per_iteration
+  reference_models:
+  - provider: nvidia
+    model: qwen/qwen3.5-397b-a17b
+  - provider: kilocode
+    model: poolside/laguna-m.1:free
+  - provider: nvidia
+    model: z-ai/glm-5.1
+  - provider: nvidia
+    model: minimaxai/minimax-m3
+  - provider: kilocode
+    model: stepfun/step-3.7-flash:free
+  - provider: nvidia
+    model: openai/gpt-oss-120b
+  - provider: nvidia
+    model: mistralai/mistral-large-3-675b-instruct-2512
+  aggregator:
+    provider: opencode-zen
+    model: big-pickle
+  reference_temperature: 0.6
+  aggregator_temperature: 0.4
+  max_tokens: 9096
+  fanout: per_iteration
+  enabled: true
+skills:
+  external_dirs: []
+  template_vars: true
+  inline_shell: false
+  inline_shell_timeout: 10
+  guard_agent_created: false
+  write_approval: false
+  disabled:
+  - architecture-diagram
+  - ascii-art
+  - ascii-video
+  - baoyu-infographic
+  - claude-design
+  - claude-design-process
+  - claude-design-standards
+  - claude-design-visual
+  - comfyui
+  - comfyui-quickstart
+  - comfyui-setup
+  - design-md
+  - excalidraw
+  - gif-search
+  - heartmula
+  - hermes-agent-skill-authoring
+  - huggingface-hub
+  - humanizer
+  - humanizer-core
+  - humanizer-patterns
+  - inspecting-hermes-desktop-dom
+  - manim-video
+  - node-inspect-debugger
+  - openhue
+  - p5js
+  - p5js-core
+  - p5js-implementation
+  - p5js-workflow
+  - popular-web-designs
+  - powerpoint
+  - pretext
+  - requesting-code-review
+  - simplify-code
+  - sketch
+  - songsee
+  - songwriting-and-ai-music
+  - svg-authoring
+  - touchdesigner-mcp
+  - touchdesigner-mcp-advanced
+  - touchdesigner-mcp-workflow
+  - youtube-content
+curator:
+  enabled: true
+  interval_hours: 168
+  min_idle_hours: 2
+  stale_after_days: 14
+  archive_after_days: 30
+  consolidate: false
+  prune_builtins: true
+  backup:
+    enabled: true
+    keep: 5
+timezone: '7'
+slack:
+  require_mention: true
+  free_response_channels: ''
+  allowed_channels: ''
+discord:
+  require_mention: true
+  free_response_channels: ''
+  allowed_channels: ''
+  auto_thread: true
+  thread_require_mention: false
+  history_backfill: true
+  history_backfill_limit: 50
+  reactions: true
+  dm_role_auth_guild: ''
+  server_actions: ''
+  allow_any_attachment: true
+  max_attachment_bytes: 33554432
+  voice_fx:
+    enabled: false
+    ambient_enabled: true
+    ambient_path: ''
+    ambient_gain: 0.18
+    duck_gain: 0.06
+    speech_gain: 1
+    ack_enabled: true
+    ack_phrases:
+    - Let me look into that.
+    - One moment.
+    - Checking on that now.
+    - Give me a sec.
+    - On it.
+telegram:
+  reactions: true
+  allowed_chats: ''
+  extra:
+    rich_messages: true
+    rich_drafts: false
+mattermost:
+  require_mention: true
+  free_response_channels: ''
+  allowed_channels: ''
+matrix:
+  require_mention: true
+  free_response_rooms: ''
+  allowed_rooms: ''
+approvals:
+  mode: 'off'
+  timeout: 60
+  cron_mode: allow
+  mcp_reload_confirm: true
+  destructive_slash_confirm: false
+command_allowlist: []
+plugins:
+  enabled:
+  - hermes-relay
+  disabled: []
+hooks_auto_accept: false
+security:
+  allow_private_urls: false
+  redact_secrets: true
+  tirith_enabled: true
+  tirith_path: tirith
+  tirith_timeout: 5
+  tirith_fail_open: true
+  website_blocklist:
+    enabled: false
+    domains: []
+    shared_files: []
+  acked_advisories: []
+  allow_lazy_installs: true
+cron:
+  provider: ''
+  chronos:
+    portal_url: https://portal.nousresearch.com
+    callback_url: ''
+    expected_audience: ''
+    nas_jwks_url: ''
+  wrap_response: true
+  mirror_delivery: false
+  output_retention: 50
+kanban:
+  dispatch_in_gateway: true
+  dispatch_interval_seconds: 60
+  failure_limit: 2
+  worker_log_rotate_bytes: 2097152
+  worker_log_backup_count: 1
+  orchestrator_profile: default
+  default_assignee: neo_agent
+  auto_decompose: true
+  auto_decompose_per_tick: 3
+  dispatch_stale_timeout_seconds: 14400
+code_execution:
+  mode: project
+tools:
+  tool_search:
+    enabled: auto
+    threshold_pct: 10
+    search_default_limit: 5
+    max_search_limit: 20
+logging:
+  level: INFO
+  max_size_mb: 5
+  backup_count: 3
+model_catalog:
+  enabled: true
+  url: https://hermes-agent.nousresearch.com/docs/api/model-catalog.json
+network:
+  force_ipv4: false
+gateway:
+  scale_to_zero:
+    idle_timeout_minutes: 5
+  message_timestamps:
+    enabled: false
+  max_inbound_media_bytes: 134217728
+  strict: false
+  media_delivery_allow_dirs: []
+  trust_recent_files: true
+  trust_recent_files_seconds: 600
+  api_server:
+    max_concurrent_runs: 10
+streaming:
+  enabled: false
+  transport: auto
+  edit_interval: 0.8
+  buffer_threshold: 24
+  cursor: ' ▉'
+  fresh_final_after_seconds: 60
+sessions:
+  auto_prune: false
+  retention_days: 90
+  vacuum_after_prune: true
+  min_interval_hours: 24
+  write_json_snapshots: false
+onboarding:
+  seen:
+    busy_input_prompt: true
+    tool_progress_prompt: true
+    openclaw_residue_cleanup: true
+  profile_build: ask
+updates:
+  pre_update_backup: false
+  backup_keep: 5
+  non_interactive_local_changes: stash
+lsp:
+  enabled: true
+  wait_mode: document
+  wait_timeout: 5
+  install_strategy: auto
+x_search:
+  model: grok-4.20-reasoning
+  timeout_seconds: 180
+  retries: 2
+secrets:
+  bitwarden:
+    enabled: false
+    access_token_env: REDACTED
+    project_id: ''
+    cache_ttl_seconds: 300
+    override_existing: true
+    auto_install: true
+    server_url: ''
+paste_collapse_threshold: 5
+paste_collapse_threshold_fallback: 5
+paste_collapse_char_threshold: 2000
+computer_use:
+  cua_telemetry: false
+_config_version: 45
+image_gen:
+  model: gpt-image-2-high
+  provider: openai-codex
+  use_gateway: false
+known_plugin_toolsets:
+  cli:
+  - a2a
+  - spotify
+  discord:
+  - spotify
+  whatsapp:
+  - spotify
+platform_toolsets:
+  cli:
+  - browser
+  - clarify
+  - code_execution
+  - connections
+  - context_engine
+  - cronjob
+  - delegation
+  - file
+  - image_gen
+  - kanban
+  - memory
+  - messaging
+  - session_search
+  - skills
+  - terminal
+  - todo
+  - tts
+  - video
+  - vision
+  - web
+  discord:
+  - browser
+  - clarify
+  - code_execution
+  - computer_use
+  - connections
+  - context_engine
+  - cronjob
+  - delegation
+  - file
+  - image_gen
+  - memory
+  - messaging
+  - session_search
+  - skills
+  - terminal
+  - todo
+  - tts
+  - vision
+  - web
+  whatsapp:
+  - browser
+  - clarify
+  - code_execution
+  - computer_use
+  - connections
+  - context_engine
+  - cronjob
+  - delegation
+  - file
+  - image_gen
+  - memory
+  - messaging
+  - session_search
+  - skills
+  - terminal
+  - todo
+  - tts
+  - vision
+  - web
+session_reset:
+  mode: none
+video_gen:
+  model: pixverse-v6
+  provider: fal
+  use_gateway: false
+mcp_servers:
+  agentmemory:
+    command: C:/Users/Ha Trung/AppData/Local/hermes/scripts/agentmemory-mcp.cmd
+    args: []
+    env:
+      AGENTMEMORY_URL: http://127.0.0.1:3111
+  filesystem:
+    command: npx
+    args:
+    - -y
+    - '@modelcontextprotocol/server-filesystem'
+    - C:\Users\Ha Trung
+    env: {}
+  playwright:
+    command: npx
+    args:
+    - '@playwright/mcp@latest'
+    - --caps
+    - vision
+    env: {}
+  decepticon:
+    command: C:/Users/Ha Trung/AppData/Local/Programs/Python/Python313/Scripts/decepticon-mcp.exe
+    env:
+      DECEPTICON_SKIP_BOOT: '1'
+      DECEPTICON_API_URL: http://localhost:2024
+    enabled: true
+custom_providers:
+- name: Api.devin.ai
+  base_url: https://api.devin.ai/v1
+  api_key: REDACTED
+  model: swe-1.6
+- name: Api.fireworks.ai
+  base_url: https://api.fireworks.ai/inference/v1
+  api_key: REDACTED
+  model: accounts/fireworks/models/gpt-oss-120b
+  models:
+    accounts/fireworks/models/glm-5p2: {}
+    accounts/fireworks/routers/glm-5p2-fast: {}
+    accounts/fireworks/models/kimi-k2p6: {}
+    accounts/fireworks/models/kimi-k2p7-code: {}
+    accounts/fireworks/models/minimax-m2p7: {}
+    accounts/fireworks/models/minimax-m3: {}
+    accounts/fireworks/models/gpt-oss-120b: {}
+    accounts/fireworks/models/deepseek-v4-pro: {}
+    accounts/fireworks/models/qwen3p7-plus: {}
+    accounts/fireworks/models/nemotron-3-ultra-nvfp4: {}
+    accounts/fireworks/models/qwen3-reranker-8b: {}
+    accounts/fireworks/models/qwen3-embedding-8b: {}
+    accounts/fireworks/models/kimi-k3: {}
+    accounts/fireworks/routers/kimi-k3-fast: {}
+    accounts/fireworks/models/deepseek-v4-flash-0731: {}
+    accounts/fireworks/models/muse-glimmer-30b: {}
+    accounts/fireworks/models/qwen3p8-max: {}
+    accounts/fireworks/models/deepseek-v4-pro-0813: {}
+    accounts/fireworks/models/glm-5p3: {}
+    accounts/fireworks/routers/glm-5p3-fast: {}
+    accounts/fireworks/models/glm-5p3-flash: {}
+    accounts/fireworks/models/deepseek-v4-flash-vision-exp: {}
+    accounts/fireworks/models/deepseek-v4p1-flash: {}
+    accounts/fireworks/models/qwen3p8-2p4t-a95b: {}
+    accounts/fireworks/models/nemotron-lightning-3p5-30b-a3b: {}
+    accounts/fireworks/models/inkling: {}
+  models_discovered: true
+- name: Dough.id
+  base_url: https://dough.id/api/v1
+  api_key: REDACTED
+  model: groq/qwen/qwen3-32b
+- name: REDACTED
+  base_url: http://localhost:20128/v1
+  api_key: REDACTED
+  model: cx/gpt-5.5
+  models:
+    cx/gpt-5.5: {}
+    cx/gpt-5.5-review: {}
+    cx/gpt-5.4: {}
+    cx/gpt-5.4-review: {}
+    cx/gpt-5.4-mini: {}
+    cx/gpt-5.4-mini-review: {}
+    cx/gpt-5.3-codex: {}
+    cx/gpt-5.3-codex-review: {}
+    cx/gpt-5.3-codex-xhigh: {}
+    cx/gpt-5.3-codex-xhigh-review: {}
+    cx/gpt-5.3-codex-high: {}
+    cx/gpt-5.3-codex-high-review: {}
+    cx/gpt-5.3-codex-low: {}
+    cx/gpt-5.3-codex-low-review: {}
+    cx/gpt-5.3-codex-none: {}
+    cx/gpt-5.3-codex-none-review: {}
+    cx/gpt-5.3-codex-spark: {}
+    cx/gpt-5.3-codex-spark-review: {}
+    gh/copilot-search-a: {}
+    gh/copilot-search-b: {}
+    gh/copilot-search-c: {}
+    gh/exec-agent-a: {}
+    gh/exec-agent-b: {}
+    gh/exec-agent-c: {}
+    gh/gpt-5.4-mini-free-auto: {}
+    gh/gpt-5.6-luna: {}
+    gh/kimi-k3-base: {}
+    gh/kimi-k3-copilot: {}
+    gh/kimi-k3: {}
+    gh/mai-code-1.1-flash: {}
+    gh/mai-code-1-flash-4th: {}
+    gh/mai-code-1-flash-secondary: {}
+    gh/mai-code-1-flash-tertiary: {}
+    gh/trajectory-compaction: {}
+    gh/gpt-5-mini: {}
+    gh/gpt-4o-mini-2024-07-18: {}
+    gh/gpt-4o-2024-11-20: {}
+    gh/gpt-4o-2024-08-06: {}
+    gh/gpt-4.1-2025-04-14: {}
+    gh/gpt-5.6-luna-free-auto: {}
+    gh/gpt-3.5-turbo-0613: {}
+    gh/gpt-4: {}
+    gh/gpt-4-0613: {}
+    gh/gpt-4-0125-preview: {}
+    gh/gpt-4o-2024-05-13: {}
+    gh/gpt-4-o-preview: {}
+    gh/gpt-4.1: {}
+    gh/gpt-3.5-turbo: {}
+    gh/gpt-4o-mini: {}
+    gh/gpt-4o: {}
+    kc/poolside/laguna-xs-2.1:free: {}
+    kc/tencent/hy3:free: {}
+    kc/nvidia/nemotron-3-super-120b-a12b:free: {}
+    kc/nvidia/nemotron-3-ultra-550b-a55b:free: {}
+    kc/google/lyria-3-pro-preview: {}
+    kc/google/lyria-3-clip-preview: {}
+    kc/poolside/laguna-xs.2:free: {}
+    kc/poolside/laguna-m.1:free: {}
+    kc/kilo-auto/free: {}
+    kc/cohere/north-mini-code:free: {}
+    kc/nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free: {}
+    ag/gemini-3-flash-agent: {}
+    ag/gemini-3.5-flash-low: {}
+    ag/gemini-3.5-flash-extra-low: {}
+    ag/gemini-pro-agent: {}
+    ag/gemini-3.1-pro-low: {}
+    ag/claude-sonnet-4-6: {}
+    ag/claude-opus-4-6-thinking: {}
+    ag/gemini-3-flash: {}
+    gc/gemini-3.1-flash-lite-preview: {}
+    gc/gemini-2.5-flash: {}
+    gc/gemini-2.5-flash-lite: {}
+    qd/qmodel_latest: {}
+    nvidia/minimaxai/minimax-m2.7: {}
+    nvidia/minimaxai/minimax-m3: {}
+    nvidia/z-ai/glm-5.2: {}
+    nvidia/deepseek-ai/deepseek-v4-pro: {}
+    nvidia/deepseek-ai/deepseek-v4-flash: {}
+    nvidia/moonshotai/kimi-k2.6: {}
+    nvidia/nemotron-3-ultra-550b-a55b: {}
+    nvidia/parakeet-ctc-1.1b-asr: {}
+    vilao-ai/hpx/grok-4.5: {}
+    vilao-ai/ch/claude-opus-5: {}
+    vilao-ai/ch/claude-sonnet-5: {}
+    vilao-ai/alic/deepseek-v4-flash: {}
+    vilao-ai/alic/glm-5.1: {}
+    vilao-ai/cxs/gpt-5.6-sol: {}
+    vilao-ai/alic/kimi-2.7-code: {}
+    vilao-ai/ram/qwen-3.8-max: {}
+    vilao-ai/si/xai/grok-4.5: {}
+    vilao-ai/si/xai/grok-4.6: {}
+    vilao-ai/qwen3.8-max: {}
+    vilao-ai/momi/xiaomi/mimo-v2.5-pro: {}
+  models_discovered: true
+platforms:
+  whatsapp:
+    enabled: false
+  discord:
+    enabled: true
+known_builtin_toolsets:
+  cli:
+  - browser
+  - clarify
+  - code_execution
+  - computer_use
+  - connections
+  - context_engine
+  - cronjob
+  - delegation
+  - discord
+  - discord_admin
+  - file
+  - homeassistant
+  - image_gen
+  - memory
+  - session_search
+  - skills
+  - spotify
+  - stt
+  - terminal
+  - todo
+  - tts
+  - video
+  - video_gen
+  - vision
+  - web
+  - x_search
+  - yuanbao
+timeouts:
+  tools:
+    concurrent_batch: 900
+    sequential_call: 900

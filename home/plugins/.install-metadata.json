@@ -1,0 +1,7 @@
+{
+  "hermes-relay": {
+    "pinned": false,
+    "revision": "5cd18f8607a754fd15184b5f3bd07868f6cc2247",
+    "source": "https://github.com/Codename-11/hermes-relay.git#plugin"
+  }
+}

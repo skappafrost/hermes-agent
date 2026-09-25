@@ -1,0 +1,594 @@
+"""Tests for :class:`SessionManager` file-backed persistence.
+
+Covers the Commit-3 feature: sessions serialize to
+``hermes-relay-sessions.json`` on every mutation and reload on
+``__init__``, expired sessions drop at load time, corrupt files degrade
+to empty in-memory state.
+"""
+
+from __future__ import annotations
+
+import json
+import math
+import os
+import stat
+import sys
+import tempfile
+import time
+import unittest
+from pathlib import Path
+
+from plugin.relay.auth import (
+    DEFAULT_SESSIONS_FILENAME,
+    Session,
+    SessionManager,
+    default_sessions_path,
+)
+
+
+class SessionPersistenceRoundtripTests(unittest.TestCase):
+    """Create → destroy → recreate cycle: surviving sessions must be
+    readable from the freshly-loaded manager."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.path = Path(self._tmp.name) / "sessions.json"
+
+    def test_session_survives_reinstantiation(self) -> None:
+        mgr = SessionManager(persistence_path=self.path)
+        session = mgr.create_session(
+            device_name="Phone-A",
+            device_id="dev-a",
+            ttl_seconds=3600,
+            transport_hint="wss",
+            device_model="Pixel 10 Pro",
+            device_platform="Android 17",
+        )
+        token = session.token
+
+        # Drop the manager entirely (no graceful shutdown) and re-read.
+        del mgr
+        mgr2 = SessionManager(persistence_path=self.path)
+        reloaded = mgr2.get_session(token)
+        self.assertIsNotNone(reloaded)
+        assert reloaded is not None
+        self.assertEqual(reloaded.device_name, "Phone-A")
+        self.assertEqual(reloaded.device_id, "dev-a")
+        self.assertEqual(reloaded.transport_hint, "wss")
+        self.assertEqual(reloaded.device_model, "Pixel 10 Pro")
+        self.assertEqual(reloaded.device_platform, "Android 17")
+
+    def test_never_expire_roundtrips(self) -> None:
+        """``math.inf`` expiries must survive a save/load cycle —
+        json.dumps refuses inf, so we serialize the sentinel ``"never"``."""
+        mgr = SessionManager(persistence_path=self.path)
+        session = mgr.create_session(
+            device_name="Phone-Never",
+            device_id="dev-never",
+            ttl_seconds=0,  # never-expire
+        )
+        token = session.token
+        self.assertTrue(math.isinf(session.expires_at))
+
+        mgr2 = SessionManager(persistence_path=self.path)
+        reloaded = mgr2.get_session(token)
+        self.assertIsNotNone(reloaded)
+        assert reloaded is not None
+        self.assertTrue(math.isinf(reloaded.expires_at))
+        # All channel grants also come back as never.
+        for ch in ("chat", "terminal", "bridge"):
+            self.assertTrue(math.isinf(reloaded.grants[ch]))
+
+    def test_revoke_persists(self) -> None:
+        mgr = SessionManager(persistence_path=self.path)
+        token_keep = mgr.create_session("Keep", "keep-id").token
+        token_drop = mgr.create_session("Drop", "drop-id").token
+        mgr.revoke_session(token_drop)
+
+        mgr2 = SessionManager(persistence_path=self.path)
+        self.assertIsNotNone(mgr2.get_session(token_keep))
+        self.assertIsNone(mgr2.get_session(token_drop))
+
+    def test_update_persists(self) -> None:
+        """PATCH /sessions → SessionManager.update_session must flush
+        the extended expiry to disk."""
+        mgr = SessionManager(persistence_path=self.path)
+        original = mgr.create_session(
+            "Phone-X",
+            "dev-x",
+            ttl_seconds=60,  # short TTL
+        )
+        updated = mgr.update_session(original.token, ttl_seconds=0)  # now never
+        self.assertIsNotNone(updated)
+        assert updated is not None
+        self.assertTrue(math.isinf(updated.expires_at))
+
+        mgr2 = SessionManager(persistence_path=self.path)
+        reloaded = mgr2.get_session(original.token)
+        self.assertIsNotNone(reloaded)
+        assert reloaded is not None
+        self.assertTrue(math.isinf(reloaded.expires_at))
+
+    def test_refresh_token_survives_session_loss_and_rotates(self) -> None:
+        """A trusted device can recover a new session after the short
+        session row is lost, and successful refresh rotates the credential."""
+        mgr = SessionManager(persistence_path=self.path)
+        original = mgr.create_session(
+            device_name="Phone-A",
+            device_id="dev-a",
+            ttl_seconds=3600,
+            transport_hint="ws",
+            device_model="Pixel 10 Pro",
+            device_platform="Android 17",
+            issue_refresh_token=True,
+        )
+        refresh = original.refresh_token
+        self.assertIsNotNone(refresh)
+        assert refresh is not None
+
+        # Simulate a bad deployment/update that lost active sessions but kept
+        # trusted-device credentials.
+        mgr._sessions.clear()
+        mgr._save_to_disk()
+
+        mgr2 = SessionManager(persistence_path=self.path)
+        recovered = mgr2.refresh_session(
+            refresh,
+            device_name="Phone-A",
+            device_id="dev-a",
+            transport_hint="ws",
+        )
+        self.assertIsNotNone(recovered)
+        assert recovered is not None
+        self.assertNotEqual(recovered.token, original.token)
+        self.assertIsNotNone(recovered.refresh_token)
+        self.assertNotEqual(recovered.refresh_token, refresh)
+        self.assertEqual(recovered.device_model, "Pixel 10 Pro")
+        self.assertEqual(recovered.device_platform, "Android 17")
+
+        # Old refresh token was rotated away and cannot be replayed.
+        replay = mgr2.refresh_session(
+            refresh,
+            device_name="Phone-A",
+            device_id="dev-a",
+            transport_hint="ws",
+        )
+        self.assertIsNone(replay)
+
+    def test_revoke_session_removes_trusted_device(self) -> None:
+        mgr = SessionManager(persistence_path=self.path)
+        original = mgr.create_session(
+            device_name="Phone-A",
+            device_id="dev-a",
+            issue_refresh_token=True,
+        )
+        refresh = original.refresh_token
+        self.assertIsNotNone(refresh)
+        assert refresh is not None
+
+        mgr.revoke_session(original.token)
+
+        mgr2 = SessionManager(persistence_path=self.path)
+        recovered = mgr2.refresh_session(
+            refresh,
+            device_name="Phone-A",
+            device_id="dev-a",
+            transport_hint="ws",
+        )
+        self.assertIsNone(recovered)
+
+    def test_explicit_repair_replaces_same_device_session_and_refresh(self) -> None:
+        mgr = SessionManager(persistence_path=self.path)
+        original = mgr.create_session(
+            device_name="Phone-A",
+            device_id="dev-a",
+            ttl_seconds=0,
+            issue_refresh_token=True,
+        )
+        original_refresh = original.refresh_token
+        assert original_refresh is not None
+
+        replacement = mgr.create_session(
+            device_name="Phone-A",
+            device_id="dev-a",
+            ttl_seconds=0,
+            issue_refresh_token=True,
+        )
+
+        self.assertEqual(mgr.active_count(), 1)
+        self.assertIsNone(mgr.get_session(original.token))
+        self.assertIsNotNone(mgr.get_session(replacement.token))
+        self.assertIsNone(
+            mgr.refresh_session(
+                original_refresh,
+                device_name="Phone-A",
+                device_id="dev-a",
+            )
+        )
+
+    def test_legacy_unknown_desktop_ids_do_not_replace_other_pcs(self) -> None:
+        mgr = SessionManager(persistence_path=self.path)
+        desktop_a = mgr.create_session(
+            "Office PC",
+            "unknown",
+            issue_refresh_token=True,
+            client_surface="desktop",
+        )
+        desktop_b = mgr.create_session(
+            "Laptop",
+            "unknown",
+            issue_refresh_token=True,
+            client_surface="desktop",
+        )
+
+        self.assertIsNotNone(mgr.get_session(desktop_a.token))
+        self.assertIsNotNone(mgr.get_session(desktop_b.token))
+        self.assertEqual(len(mgr.list_sessions()), 2)
+
+    def test_legacy_desktop_refresh_upgrades_to_stable_installation_id(self) -> None:
+        mgr = SessionManager(persistence_path=self.path)
+        legacy = mgr.create_session(
+            "Office PC",
+            "unknown",
+            issue_refresh_token=True,
+            client_surface="desktop",
+        )
+        assert legacy.refresh_token is not None
+        stable_id = "8e751a5a-b562-4c8b-8a81-88b1b5962fbb"
+
+        refreshed = mgr.refresh_session(
+            legacy.refresh_token,
+            device_name="Office PC",
+            device_id=stable_id,
+            client_surface="desktop",
+        )
+
+        self.assertIsNotNone(refreshed)
+        assert refreshed is not None
+        self.assertEqual(refreshed.device_id, stable_id)
+        self.assertTrue(mgr.has_trusted_device(stable_id))
+
+    def test_explicit_pair_keeps_other_devices(self) -> None:
+        mgr = SessionManager(persistence_path=self.path)
+        phone_a = mgr.create_session(
+            device_name="Phone-A",
+            device_id="dev-a",
+            issue_refresh_token=True,
+        )
+        phone_b = mgr.create_session(
+            device_name="Phone-B",
+            device_id="dev-b",
+            issue_refresh_token=True,
+        )
+
+        self.assertEqual(mgr.active_count(), 2)
+        self.assertIsNotNone(mgr.get_session(phone_a.token))
+        self.assertIsNotNone(mgr.get_session(phone_b.token))
+
+    def test_existing_session_can_be_upgraded_with_refresh_token(self) -> None:
+        mgr = SessionManager(persistence_path=self.path)
+        session = mgr.create_session(
+            device_name="Phone-A",
+            device_id="dev-a",
+            ttl_seconds=3600,
+        )
+
+        refresh = mgr.issue_refresh_token_for_session(session)
+        self.assertTrue(refresh)
+
+        mgr2 = SessionManager(persistence_path=self.path)
+        recovered = mgr2.refresh_session(
+            refresh,
+            device_name="Phone-A",
+            device_id="dev-a",
+            transport_hint="ws",
+        )
+        self.assertIsNotNone(recovered)
+
+    def test_valid_reconnect_enriches_session_and_trusted_device_identity(self) -> None:
+        mgr = SessionManager(persistence_path=self.path)
+        session = mgr.create_session(
+            device_name="Legacy client",
+            device_id="dev-a",
+            issue_refresh_token=True,
+        )
+
+        mgr.update_session_device_metadata(
+            session,
+            device_name="bailey-desktop",
+            device_model="Precision 5680",
+            device_platform="Windows 11",
+            client_surface="desktop",
+            device_form_factor="desktop",
+        )
+
+        mgr2 = SessionManager(persistence_path=self.path)
+        reloaded = mgr2.get_session(session.token)
+        self.assertIsNotNone(reloaded)
+        assert reloaded is not None
+        self.assertEqual(reloaded.device_name, "bailey-desktop")
+        self.assertEqual(reloaded.device_model, "Precision 5680")
+        self.assertEqual(reloaded.device_platform, "Windows 11")
+        self.assertEqual(reloaded.client_surface, "desktop")
+        self.assertEqual(reloaded.device_form_factor, "desktop")
+
+        trusted = next(iter(mgr2._trusted_devices.values()))
+        self.assertEqual(trusted.device_name, "bailey-desktop")
+        self.assertEqual(trusted.device_model, "Precision 5680")
+        self.assertEqual(trusted.device_platform, "Windows 11")
+        self.assertEqual(trusted.client_surface, "desktop")
+        self.assertEqual(trusted.device_form_factor, "desktop")
+
+
+class SessionPersistenceExpiryTests(unittest.TestCase):
+    """Expired sessions drop at load time — phone sees a clean list
+    after relay restart."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.path = Path(self._tmp.name) / "sessions.json"
+
+    def test_expired_session_is_dropped_on_load(self) -> None:
+        """Hand-roll a persistence file containing one expired and one
+        live session. After reinstantiation only the live one survives."""
+        now = time.time()
+        payload = {
+            "version": 1,
+            "sessions": [
+                {
+                    "token": "expired-token",
+                    "device_name": "Expired",
+                    "device_id": "exp",
+                    "created_at": now - 3600,
+                    "last_seen": now - 3600,
+                    "expires_at": now - 60,  # 60 seconds ago
+                    "grants": {"chat": now - 60},
+                    "transport_hint": "wss",
+                    "first_seen": now - 3600,
+                },
+                {
+                    "token": "live-token",
+                    "device_name": "Live",
+                    "device_id": "live",
+                    "created_at": now,
+                    "last_seen": now,
+                    "expires_at": now + 3600,
+                    "grants": {"chat": now + 3600},
+                    "transport_hint": "wss",
+                    "first_seen": now,
+                },
+            ],
+        }
+        self.path.write_text(json.dumps(payload), encoding="utf-8")
+
+        mgr = SessionManager(persistence_path=self.path)
+        self.assertEqual(mgr.active_count(), 1)
+        self.assertIsNotNone(mgr.get_session("live-token"))
+        self.assertIsNone(mgr.get_session("expired-token"))
+
+
+class SessionPersistenceFileLayoutTests(unittest.TestCase):
+    """File mode (0o600), atomic-write semantics, and directory
+    creation."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.path = Path(self._tmp.name) / "subdir" / "sessions.json"
+
+    def test_missing_parent_dir_gets_created(self) -> None:
+        mgr = SessionManager(persistence_path=self.path)
+        mgr.create_session("P", "dev")
+        self.assertTrue(self.path.is_file())
+        self.assertTrue(self.path.parent.is_dir())
+
+    @unittest.skipIf(
+        sys.platform == "win32",
+        "file permissions use Windows ACLs, not POSIX 0o600",
+    )
+    def test_file_mode_is_0600(self) -> None:
+        mgr = SessionManager(persistence_path=self.path)
+        mgr.create_session("P", "dev")
+        mode = stat.S_IMODE(self.path.stat().st_mode)
+        # Owner rw (0o600). Group/world bits must be clear.
+        self.assertEqual(mode & 0o077, 0)
+
+    def test_file_content_is_well_formed_json(self) -> None:
+        mgr = SessionManager(persistence_path=self.path)
+        mgr.create_session("P", "dev")
+        with open(self.path, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        self.assertIn("version", data)
+        self.assertIn("sessions", data)
+        self.assertEqual(data["version"], 1)
+        self.assertEqual(len(data["sessions"]), 1)
+
+
+class SessionPersistenceCorruptionTests(unittest.TestCase):
+    """Corrupt persistence files must degrade to empty state rather
+    than crash the relay."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.path = Path(self._tmp.name) / "sessions.json"
+
+    def test_unparseable_json_starts_empty(self) -> None:
+        self.path.write_text("this is not json {{{", encoding="utf-8")
+        mgr = SessionManager(persistence_path=self.path)
+        self.assertEqual(mgr.active_count(), 0)
+
+    def test_non_object_root_starts_empty(self) -> None:
+        self.path.write_text("[1, 2, 3]", encoding="utf-8")
+        mgr = SessionManager(persistence_path=self.path)
+        self.assertEqual(mgr.active_count(), 0)
+
+    def test_missing_sessions_array_starts_empty(self) -> None:
+        self.path.write_text('{"version": 1}', encoding="utf-8")
+        mgr = SessionManager(persistence_path=self.path)
+        self.assertEqual(mgr.active_count(), 0)
+
+    def test_malformed_entry_is_skipped(self) -> None:
+        """One good entry + one nonsense entry → good entry survives."""
+        now = time.time()
+        payload = {
+            "version": 1,
+            "sessions": [
+                {
+                    "token": "good-token",
+                    "device_name": "Good",
+                    "device_id": "g",
+                    "created_at": now,
+                    "last_seen": now,
+                    "expires_at": now + 3600,
+                    "grants": {},
+                    "transport_hint": "wss",
+                    "first_seen": now,
+                },
+                # Missing required "token" field.
+                {"device_name": "Bad"},
+            ],
+        }
+        self.path.write_text(json.dumps(payload), encoding="utf-8")
+        mgr = SessionManager(persistence_path=self.path)
+        self.assertEqual(mgr.active_count(), 1)
+        self.assertIsNotNone(mgr.get_session("good-token"))
+
+
+class SessionPersistenceVersionTests(unittest.TestCase):
+    """A relay update must not force a re-pair just because the on-disk
+    schema version moved. The load path is version-aware but drop-averse:
+    a newer/older/absent version still loads its records best-effort."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.path = Path(self._tmp.name) / "sessions.json"
+
+    def test_newer_version_file_still_loads_sessions_and_trusted_devices(self) -> None:
+        """A file stamped with a FUTURE version (e.g. after a relay
+        downgrade) keeps its sessions AND its trusted-device refresh
+        credentials — neither a valid session nor a refresh recovery is
+        dropped over a version number alone."""
+        mgr = SessionManager(persistence_path=self.path)
+        session = mgr.create_session(
+            device_name="Phone-A",
+            device_id="dev-a",
+            ttl_seconds=3600,
+            issue_refresh_token=True,
+        )
+        token = session.token
+        refresh = session.refresh_token
+        assert refresh is not None
+
+        # Simulate a file written by a newer relay: bump the on-disk version
+        # far past what this code understands.
+        data = json.loads(self.path.read_text(encoding="utf-8"))
+        data["version"] = 999
+        self.path.write_text(json.dumps(data), encoding="utf-8")
+
+        mgr2 = SessionManager(persistence_path=self.path)
+        # The live session survived (no re-pair needed at all).
+        self.assertEqual(mgr2.active_count(), 1)
+        self.assertIsNotNone(mgr2.get_session(token))
+        # And the trusted-device record survived, so a lost session would
+        # still recover via refresh rather than forcing a QR re-pair.
+        recovered = mgr2.refresh_session(
+            refresh,
+            device_name="Phone-A",
+            device_id="dev-a",
+            transport_hint="ws",
+        )
+        self.assertIsNotNone(recovered)
+
+    def test_versionless_file_still_loads(self) -> None:
+        """A file with no ``version`` key (hand-edited or pre-versioning)
+        still loads its sessions rather than starting empty."""
+        now = time.time()
+        payload = {
+            "sessions": [
+                {
+                    "token": "live-token",
+                    "device_name": "Live",
+                    "device_id": "live",
+                    "created_at": now,
+                    "last_seen": now,
+                    "expires_at": now + 3600,
+                    "grants": {"chat": now + 3600},
+                    "transport_hint": "wss",
+                    "first_seen": now,
+                },
+            ],
+        }
+        self.path.write_text(json.dumps(payload), encoding="utf-8")
+        mgr = SessionManager(persistence_path=self.path)
+        self.assertEqual(mgr.active_count(), 1)
+        self.assertIsNotNone(mgr.get_session("live-token"))
+
+    def test_missing_file_is_logged(self) -> None:
+        """A missing session file (e.g. an update that lost it) is logged
+        so the forced-re-pair cause is diagnosable, not silent."""
+        with self.assertLogs("hermes_relay.auth", level="INFO") as cm:
+            SessionManager(persistence_path=self.path)
+        self.assertTrue(
+            any("no session file" in line.lower() for line in cm.output),
+            msg=f"expected a 'no session file' log, got: {cm.output}",
+        )
+
+
+class SessionPersistenceDisabledTests(unittest.TestCase):
+    """``persistence_path=None`` (the default) must stay fully in-memory."""
+
+    def test_default_is_in_memory(self) -> None:
+        mgr = SessionManager()
+        session = mgr.create_session("P", "dev")
+        # A sibling manager cannot find this token — there's no disk
+        # state to share.
+        other = SessionManager()
+        self.assertIsNone(other.get_session(session.token))
+
+    def test_explicit_none_is_in_memory(self) -> None:
+        mgr = SessionManager(persistence_path=None)
+        mgr.create_session("P", "dev")
+        # No file should appear under HERMES_HOME.
+        # We don't assert on the filesystem here — the strong assertion
+        # is that construction + create_session didn't raise when no
+        # path was provided.
+        self.assertEqual(mgr.active_count(), 1)
+
+
+class DefaultSessionsPathTests(unittest.TestCase):
+    """``default_sessions_path`` resolves to ``$HERMES_HOME`` or
+    ``~/.hermes`` — mirrors qr_sign."""
+
+    def test_respects_hermes_home_env(self) -> None:
+        prior = os.environ.get("HERMES_HOME")
+        try:
+            with tempfile.TemporaryDirectory() as td:
+                os.environ["HERMES_HOME"] = td
+                p = default_sessions_path()
+                self.assertEqual(p.name, DEFAULT_SESSIONS_FILENAME)
+                # Parent should resolve back to the override dir.
+                self.assertEqual(p.parent.resolve(), Path(td).resolve())
+        finally:
+            if prior is None:
+                os.environ.pop("HERMES_HOME", None)
+            else:
+                os.environ["HERMES_HOME"] = prior
+
+    def test_falls_back_to_home_dot_hermes(self) -> None:
+        prior = os.environ.get("HERMES_HOME")
+        try:
+            os.environ.pop("HERMES_HOME", None)
+            p = default_sessions_path()
+            self.assertEqual(p.name, DEFAULT_SESSIONS_FILENAME)
+            self.assertIn(".hermes", str(p))
+        finally:
+            if prior is not None:
+                os.environ["HERMES_HOME"] = prior
+
+
+if __name__ == "__main__":
+    unittest.main()

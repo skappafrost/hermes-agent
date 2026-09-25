@@ -1,0 +1,6 @@
+name: agentmemory
+version: 0.1.0
+kind: exclusive
+description: Push-injection memory provider over a local agentmemory server (POST /agentmemory/search per turn). No tools, no writes — the agentmemory MCP bridge owns those.
+# Intentionally NO pip_dependencies: the provider is stdlib-only (urllib), which keeps it out of
+# `hermes update`'s dependency re-resolution so it can never be auto-moved to plugins.disabled.
