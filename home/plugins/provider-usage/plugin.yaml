@@ -1,0 +1,4 @@
+name: provider-usage
+version: "0.2.0"
+requires_hermes: ">=0.21.0"
+description: Vilao wallet plus the five most recent model calls, in the status bar.

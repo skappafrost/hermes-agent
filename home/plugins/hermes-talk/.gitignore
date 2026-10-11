@@ -1,0 +1,20 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+.pytest-tmp/
+.hermes-*.md
+.ruff_cache/
+dist/
+# Commit generated UI bundles because Hermes serves the installed plugin
+# directly. Regenerate dashboard and Desktop together with scripts/build_ui.py.
+!dashboard/dist/
+build/
+*.egg-info/
+.env
+node_modules/
+.codex/
+uv.lock
+.hermes-*-review.md
+.hermes-*-tdd.md

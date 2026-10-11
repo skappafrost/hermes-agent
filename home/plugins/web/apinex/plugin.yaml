@@ -1,0 +1,11 @@
+name: web-apinex
+version: 1.0.0
+description: "APInex web tools: search + extract with round-robin key pool, backoff retry, and the APInex -> searchx -> unsearch -> exa fallback chain, plus the web_research tool (multi-step research with citations). Requires APINEX_API_KEY (+ _2.._9 for pooling) from https://apinex.bond; SEARCHX_API_KEY / UNSEARCH_API_KEY optional for the lower tiers."
+author: Skappa (custom)
+kind: backend
+provides_web_providers:
+  - apinex
+  - searchx
+  - unsearch
+hooks:
+  - post_tool_call

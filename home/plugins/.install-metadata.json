@@ -1,0 +1,19 @@
+{
+  "hermes-relay": {
+    "pinned": false,
+    "revision": "5cd18f8607a754fd15184b5f3bd07868f6cc2247",
+    "source": "https://github.com/Codename-11/hermes-relay.git#plugin"
+  },
+  "homeassistant": {
+    "catalog": {
+      "name": "homeassistant",
+      "pin": "ba30cb0cf86c52bdb5cde98974bc062e97966529",
+      "repo": "https://github.com/NousResearch/hermes-homeassistant",
+      "sha": "ba30cb0cf86c52bdb5cde98974bc062e97966529",
+      "tier": "official"
+    },
+    "pinned": true,
+    "revision": "ba30cb0cf86c52bdb5cde98974bc062e97966529",
+    "source": "https://github.com/NousResearch/hermes-homeassistant"
+  }
+}

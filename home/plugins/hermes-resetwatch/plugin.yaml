@@ -1,0 +1,12 @@
+{
+  "name": "hermes-resetwatch",
+  "version": "0.6.0",
+  "description": "Per-model call log and cost charts in Hermes Desktop: every call Hermes makes, priced against the real vilao bill.",
+  "author": "Adolanium",
+  "manifest_version": 1,
+  "kind": "standalone",
+  "provides_tools": [],
+  "provides_hooks": ["post_api_request", "post_auxiliary_call", "api_request_error"],
+  "provides_middleware": [],
+  "requires_env": []
+}

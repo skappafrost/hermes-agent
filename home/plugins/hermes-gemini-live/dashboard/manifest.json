@@ -1,0 +1,9 @@
+{
+  "name": "hermes-gemini-live",
+  "label": "Gemini Live",
+  "description": "Full-duplex Gemini Live voice for Desktop: audio relays through the backend so the API key never reaches the client, and one delegate tool hands real work to Hermes.",
+  "icon": "MessageSquare",
+  "version": "0.1.0",
+  "tab": { "path": "/gemini-live", "hidden": true },
+  "api": "plugin_api.py"
+}

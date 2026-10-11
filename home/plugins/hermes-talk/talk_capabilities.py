@@ -1,0 +1,659 @@
+"""Live capability catalog — what this Hermes session can ACTUALLY do.
+
+Talk could always describe itself; it could never check. Asked "what can you
+do right now?" the model either recited its system prompt or spent a whole
+delegated agent turn finding out. This module is the third answer: a bounded,
+read-only snapshot of the installed skills, the resolved toolsets and their
+enabled/configured state, the gateway's own feature flags, and how much work
+is in flight.
+
+**Two tiers, in-process first.** The same doctrine
+:meth:`talk_host.HostAdapter.agent_lane` and :mod:`talk_apiserver` already
+established: inside a Hermes process the catalog is enumerated directly from
+the host's own registries (``tools.skills_tool``, ``hermes_cli.tools_config``,
+``model_tools.get_tool_definitions`` — see
+:func:`talk_host._catalog_from_host_modules`); otherwise the api_server
+answers over ``/v1/*``. A process with no host registries falls through
+rather than failing.
+
+**Reading is all it does.** Nothing here executes, mints, or authorizes
+anything, which is why ``talk_capabilities`` is classified in
+:data:`talk_operator_auth.READ_ONLY_TALK_TOOLS`. A catalog entry saying a
+toolset exists is not permission to use it, and the two questions are decided
+in different modules on purpose.
+
+**Redaction happens at the report boundary**, in
+``talk_tools._handle_talk_capabilities``, matching :mod:`talk_doctor`'s own
+convention — the collector returns what it read, and the thing that emits it
+decides what may be said out loud. Upstream payloads are not this process's
+text, so they are scrubbed before they can reach a transcript.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import threading
+import time
+from dataclasses import dataclass
+
+try:
+    from . import talk_apiserver, talk_config, talk_host
+except ImportError:  # pragma: no cover - flat-module fallback (Hermes file-path load)
+    import talk_apiserver
+    import talk_config
+    import talk_host
+
+_log = logging.getLogger(__name__)
+
+#: Where a resolved snapshot came from. Reported verbatim so an operator can
+#: tell "the attached agent told me" from "the gateway told me".
+SOURCE_IN_PROCESS = "in-process"
+SOURCE_API_SERVER = "api-server"
+SOURCE_NONE = "unavailable"
+
+INERT_DETAIL = "the Hermes capability catalog lane is switched off in this process"
+CHECKING_DETAIL = "I haven't finished reading the Hermes capability catalog"
+UNREACHABLE_DETAIL = "I'm running outside a Hermes agent, and {reason}"
+
+#: The only ``/health/detailed`` fields this feature surfaces. A whitelist and
+#: not a blocklist: that endpoint is a health surface, not a catalog one, and
+#: what a future gateway adds to it is not a decision this plugin gets to make
+#: on an operator's behalf after the fact.
+HEALTH_COUNTERS = ("active_runs", "active_delegations")
+
+#: The only ``/v1/capabilities`` fields this feature surfaces — the same
+#: discipline, for the same reason: a future gateway field must not silently
+#: start riding a voice transcript just because it appeared in the document.
+#: ``CAPABILITY_FIELDS`` are speakable strings; ``CAPABILITY_FEATURES`` are the
+#: documented boolean feature flags (the chat/responses/runs/approval/session
+#: surface the gateway advertises). Everything else — endpoints, auth config,
+#: runtime prose, whatever ships next — is dropped, not spoken.
+CAPABILITY_FIELDS = ("platform", "model")
+CAPABILITY_FEATURES = (
+    "chat_completions",
+    "chat_completions_streaming",
+    "responses_api",
+    "responses_streaming",
+    "run_submission",
+    "run_status",
+    "run_events_sse",
+    "run_stop",
+    "run_steer",
+    "run_approval_response",
+    "tool_progress_events",
+    "approval_events",
+    "session_resources",
+    "session_chat",
+    "session_chat_streaming",
+    "session_fork",
+    "session_model_lock",
+    "model_options",
+    "skills_api",
+    "audio_api",
+    "realtime_voice",
+    "memory_write_api",
+    "admin_config_rw",
+    "jobs_admin",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class CatalogSnapshot:
+    """One resolved catalog read. ``detail`` is written to be said out loud.
+
+    ``tools`` is the LIVE resolved tool-name set — present only from the
+    in-process tier, where ``get_tool_definitions`` applies the registry's
+    availability gates. ``tools_resolved`` is what separates the two
+    meanings an empty tuple would otherwise collapse: ``True`` means the
+    live read SUCCEEDED (an empty set is then a real answer — nothing
+    resolves right now, and consumers must filter against it, not fall back
+    to static flags); ``False`` means there is no live answer at all (the
+    REST tier, or a failed read — static enabled/configured flags govern).
+    """
+
+    source: str
+    skills: tuple[dict, ...]
+    toolsets: tuple[dict, ...]
+    capabilities: dict
+    health: dict
+    detail: str
+    tools: tuple[str, ...] = ()
+    tools_resolved: bool = False
+
+
+#: Cached snapshot + when it was taken. Guarded for the same reason
+#: ``talk_apiserver._STATUS_LOCK`` is: reads arrive from the event loop, from
+#: run workers, and from the dashboard's thread pool. ``_STORE_SEQ`` counts
+#: stores: every read captures it before it starts, and :func:`_store` refuses
+#: a snapshot whose read started before the currently-stored one landed —
+#: last-writer-wins would otherwise let an old slow failure clobber a newer
+#: healthy snapshot.
+_LOCK = threading.Lock()
+_SNAPSHOT: CatalogSnapshot | None = None
+_SNAPSHOT_AT: float = 0.0
+_STORE_SEQ = 0
+_REFRESHING = False
+#: Set the first time ANY snapshot lands (an honest failure included — waiting
+#: longer would not improve it). :func:`wait_until_warm` blocks on this so a
+#: cold session start can give the background read a bounded head start.
+_FILLED = threading.Event()
+
+
+def _rest_lane_enabled() -> bool:
+    """Inert under pytest unless a test explicitly opts in.
+
+    The same guard, and the same reason, as ``talk_apiserver._lane_enabled``,
+    but its OWN switch: these four catalog reads bypass ``probe``, so a suite
+    that pins ``probe`` to a fake verdict — which several do, to exercise the
+    lane tile — would otherwise have this module dial port 8642 for real from
+    the session-start warm. Tests that mean to exercise the REST tier
+    monkeypatch this to ``lambda: True``.
+    """
+
+    return "PYTEST_CURRENT_TEST" not in os.environ
+
+
+def _empty(detail: str) -> CatalogSnapshot:
+    """A snapshot that answers honestly instead of claiming an empty install."""
+
+    return CatalogSnapshot(
+        source=SOURCE_NONE,
+        skills=(),
+        toolsets=(),
+        capabilities={},
+        health={},
+        detail=detail,
+    )
+
+
+def _entries(value: object) -> tuple[dict, ...]:
+    """Catalog entries from an untrusted payload field, non-dicts dropped."""
+
+    if not isinstance(value, list):
+        return ()
+    return tuple(entry for entry in value if isinstance(entry, dict))
+
+
+def _bounded_health(raw: dict) -> dict:
+    """Only the counters in :data:`HEALTH_COUNTERS`, and only when integers."""
+
+    return {
+        key: raw[key]
+        for key in HEALTH_COUNTERS
+        if isinstance(raw.get(key), int) and not isinstance(raw.get(key), bool)
+    }
+
+
+def _bounded_capabilities(raw: dict) -> dict:
+    """Only the fields in :data:`CAPABILITY_FIELDS` / :data:`CAPABILITY_FEATURES`.
+
+    The whole document is upstream text headed for a transcript, so it gets the
+    :func:`_bounded_health` treatment: named keys with the right types survive,
+    everything else is dropped rather than spoken.
+    """
+
+    bounded: dict = {
+        key: raw[key] for key in CAPABILITY_FIELDS if isinstance(raw.get(key), str)
+    }
+    features = raw.get("features")
+    if isinstance(features, dict):
+        kept = {
+            key: features[key]
+            for key in CAPABILITY_FEATURES
+            if isinstance(features.get(key), bool)
+        }
+        if kept:
+            bounded["features"] = kept
+    return bounded
+
+
+def _looks_like_catalog(payload: dict) -> bool:
+    """True only for a dict that is recognizably a capability catalog.
+
+    The in-process tier builds this payload itself
+    (:func:`talk_host._catalog_from_host_modules`), so this guard is pure
+    defense in depth: a payload with none of the catalog keys must read as
+    "no answer here" and fall through, never be stored as an empty catalog.
+    """
+
+    if "error" in payload:
+        return False
+    return (
+        isinstance(payload.get("skills"), list)
+        or isinstance(payload.get("toolsets"), list)
+        or isinstance(payload.get("capabilities"), dict)
+    )
+
+
+def _from_in_process() -> CatalogSnapshot | None:
+    """Tier 1. ``None`` means "no answer here", never "nothing installed"."""
+
+    try:
+        raw = talk_host.host().capability_catalog_probe()
+    except Exception as exc:  # noqa: BLE001 — a probe must never escape
+        _log.debug("in-process catalog read failed: %s: %s", type(exc).__name__, exc)
+        return None
+    if raw is None:
+        return None
+    try:
+        payload = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(payload, dict) or not _looks_like_catalog(payload):
+        return None
+    capabilities = payload.get("capabilities")
+    health = payload.get("health")
+    tools = payload.get("tools")
+    return CatalogSnapshot(
+        source=SOURCE_IN_PROCESS,
+        skills=_entries(payload.get("skills")),
+        toolsets=_entries(payload.get("toolsets")),
+        capabilities=_bounded_capabilities(
+            capabilities if isinstance(capabilities, dict) else {}
+        ),
+        health=_bounded_health(health if isinstance(health, dict) else {}),
+        detail="the Hermes agent I'm attached to",
+        tools=(
+            tuple(sorted({str(name) for name in tools if isinstance(name, str) and name}))
+            if isinstance(tools, list)
+            else ()
+        ),
+        tools_resolved=bool(payload.get("tools_resolved")) and isinstance(tools, list),
+    )
+
+
+def _from_api_server() -> CatalogSnapshot:
+    """Tier 2. Four reads, and any one of them failing fails the whole catalog.
+
+    Deliberately all-or-nothing: a half-read catalog that silently omits the
+    toolsets would be spoken as though those toolsets did not exist, which is
+    exactly the fabrication this feature exists to stop.
+    """
+
+    if not _rest_lane_enabled():
+        return _empty(INERT_DETAIL)
+    verdict = talk_apiserver.status()
+    if not verdict.available:
+        return _empty(UNREACHABLE_DETAIL.format(reason=verdict.detail))
+    try:
+        skills = talk_apiserver.list_skills()
+        toolsets = talk_apiserver.list_toolsets()
+        capabilities = talk_apiserver.capabilities_payload()
+        health = talk_apiserver.health_detailed()
+    except talk_apiserver.TalkApiServerError as exc:
+        return _empty(str(exc))
+    return CatalogSnapshot(
+        source=SOURCE_API_SERVER,
+        skills=tuple(skills),
+        toolsets=tuple(toolsets),
+        capabilities=_bounded_capabilities(capabilities),
+        health=_bounded_health(health),
+        detail="the Hermes api server",
+    )
+
+
+def _resolve() -> CatalogSnapshot:
+    """Best available evidence. Touches no lock — see :func:`_refresh_in_background`."""
+
+    snapshot = _from_in_process()
+    if snapshot is not None:
+        return snapshot
+    return _from_api_server()
+
+
+def _resolve_or_explain() -> CatalogSnapshot:
+    """:func:`_resolve`, with any escaping failure turned into speakable text."""
+
+    try:
+        return _resolve()
+    except Exception as exc:  # noqa: BLE001 — a catalog read is never fatal
+        _log.warning("capability catalog read failed: %s: %s", type(exc).__name__, exc)
+        return _empty(f"I couldn't read the capability catalog ({type(exc).__name__})")
+
+
+def _read_seq() -> int:
+    with _LOCK:
+        return _STORE_SEQ
+
+
+def _store(snapshot: CatalogSnapshot, started_seq: int) -> None:
+    """Store one resolved snapshot — unless a newer one landed first.
+
+    ``started_seq`` is :data:`_STORE_SEQ` as it was when this snapshot's READ
+    began. If it no longer matches, some other read that started later has
+    already stored, and what this thread is holding is older evidence wearing
+    a newer arrival time — dropped, not stored.
+    """
+
+    global _SNAPSHOT, _SNAPSHOT_AT, _STORE_SEQ
+    with _LOCK:
+        if started_seq != _STORE_SEQ:
+            return
+        _STORE_SEQ += 1
+        _SNAPSHOT = snapshot
+        _SNAPSHOT_AT = time.monotonic()
+    _FILLED.set()
+
+
+def _refresh_in_background() -> None:
+    """Re-read off the hot path so a warm caller never waits on the network."""
+
+    global _REFRESHING
+    with _LOCK:
+        if _REFRESHING:
+            return
+        _REFRESHING = True
+        started_seq = _STORE_SEQ
+
+    def worker() -> None:
+        global _REFRESHING
+        try:
+            snapshot = _resolve_or_explain()
+        finally:
+            with _LOCK:
+                _REFRESHING = False
+        # Stored even when it failed, for the reason talk_apiserver stores a
+        # failed probe: a cache that never fills re-reads on every single turn.
+        _store(snapshot, started_seq)
+
+    threading.Thread(
+        target=worker, name="talk-capabilities-resolve", daemon=True
+    ).start()
+
+
+def warm() -> CatalogSnapshot:
+    """Read now, cache it, and return it. **BLOCKS.**
+
+    The one function here that waits on the network. It belongs at a session
+    start, on a thread where waiting is free — never in a tool handler, which
+    runs on the loop carrying the audio. That handler wants :func:`status`.
+    """
+
+    started_seq = _read_seq()
+    snapshot = _resolve_or_explain()
+    _store(snapshot, started_seq)
+    return snapshot
+
+
+def status() -> CatalogSnapshot:
+    """The current snapshot. NEVER waits for the network.
+
+    A cold cache schedules a read and says it is still checking; a stale one
+    answers with what it last saw and refreshes behind it. "Still checking" is
+    reported as :data:`SOURCE_NONE` rather than as an empty catalog, because a
+    catalog we cannot vouch for must not be spoken as a complete one.
+    """
+
+    with _LOCK:
+        cached, taken_at = _SNAPSHOT, _SNAPSHOT_AT
+    if cached is None:
+        _refresh_in_background()
+        return _empty(CHECKING_DETAIL)
+    if time.monotonic() - taken_at >= talk_config.capability_catalog_ttl_s():
+        _refresh_in_background()
+    return cached
+
+
+def warm_in_background() -> None:
+    """Kick a catalog read off the caller's thread. Fire and forget.
+
+    Session starts call this before instruction assembly so the cache is
+    filling while auth and audio set up; a section built moments later reads
+    whatever has landed, never waits.
+    """
+
+    _refresh_in_background()
+
+
+def wait_until_warm(timeout_s: float) -> CatalogSnapshot | None:
+    """Bounded wait for the FIRST catalog read to land. Fail-open.
+
+    Session starts warm the cache in the background and mint the resident
+    prompt moments later; on a cold process the section used to lose that
+    race and silently omit the live catalog for the whole session. This
+    waits — at most ``timeout_s`` — for a resolved snapshot (a stored
+    failure counts: waiting longer would not improve it) and returns
+    whatever is cached. ``timeout_s <= 0`` never blocks. ``None`` means the
+    wait expired with nothing stored — the caller proceeds exactly as
+    before, and the degraded start is logged so the missing section is
+    visible instead of silent.
+    """
+
+    with _LOCK:
+        cached = _SNAPSHOT
+    if cached is not None:
+        return cached
+    _refresh_in_background()
+    if timeout_s > 0 and _FILLED.wait(timeout_s):
+        with _LOCK:
+            return _SNAPSHOT
+    if timeout_s > 0:
+        _log.info(
+            "capability catalog still warming after %.1fs — this session "
+            "starts without the live-catalog section",
+            timeout_s,
+        )
+    return None
+
+
+# -- the resident-prompt section (capability bridge) -----------------------------
+
+#: How many tool categories the prompt section may name. The prompt is
+#: resident and re-billed on every turn — a budget, not a preference.
+MAX_SECTION_CATEGORIES = 10
+
+#: High-agency categories lead the resident section so the per-turn budget cap
+#: can never truncate the tools that make delegation worth naming. Catalog
+#: order put ``computer_use`` last (27 of 27), so the cap dropped it — and a
+#: voice model that never sees ``computer_use`` refuses screen work instead of
+#: delegating it. Anything not listed keeps catalog order behind these.
+_PRIORITY_CATEGORIES = (
+    "computer_use",
+    "terminal",
+    "browser",
+    "code_execution",
+    "vision",
+    "file",
+    "web",
+    "memory",
+    "skills",
+    "delegation",
+)
+
+#: Resolved TOOL name -> the plain phrase spoken in the delegate directive. A
+#: voice model assumes its own missing tools are Hermes-wide limits and says
+#: "I can't"; naming the high-agency actions it can hand off is what turns that
+#: into a delegated run. Spoken ONLY when the tool is in the live resolved set,
+#: so the honesty floor this whole feature defends is never crossed.
+_DELEGATE_HEADLINERS = (
+    ("computer_use", "see and control the screen"),
+    ("terminal", "run terminal commands"),
+    ("execute_code", "run code"),
+    ("browser_navigate", "browse the web"),
+)
+
+
+def _natural_join(items: list[str]) -> str:
+    """``[a]`` -> ``a``; ``[a, b]`` -> ``a and b``; ``[a, b, c]`` -> ``a, b, and c``."""
+
+    if len(items) == 1:
+        return items[0]
+    if len(items) == 2:
+        return f"{items[0]} and {items[1]}"
+    return ", ".join(items[:-1]) + ", and " + items[-1]
+
+#: One catalog name, fit for the resident prompt. Catalog entries are
+#: upstream text; a name with punctuation or whitespace tricks does not get
+#: to ride a prompt nobody is reading on a screen. Identifiers only.
+_SECTION_NAME_MAX_CHARS = 32
+_SECTION_NAME_CHARS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_ ")
+
+
+def _section_name(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    name = value.strip()
+    if not name or len(name) > _SECTION_NAME_MAX_CHARS:
+        return None
+    if any(ch not in _SECTION_NAME_CHARS for ch in name):
+        return None
+    return name
+
+
+def _usable(entry: dict) -> bool:
+    """A catalog flag disqualifies only when present AND negative."""
+
+    return not (
+        entry.get("enabled") is False
+        or entry.get("disabled") is True
+        or entry.get("installed") is False
+        or entry.get("configured") is False
+    )
+
+
+def instruction_section(snapshot: CatalogSnapshot | None = None) -> str | None:
+    """The bounded capabilities block for the session prompt, or ``None``.
+
+    ``None`` fails open to the plain preamble: the catalog is unreachable,
+    or it holds nothing true to claim. When a snapshot IS available the
+    section says what this install can do — a skill count and the usable
+    tool categories — plus the two rules that keep the model honest: the
+    delegation ceiling, and never inventing tool names.
+
+    When the snapshot carries the live resolved tool set (the in-process
+    tier), a category whose tools ALL failed the host's availability gates
+    is not claimed: enabled-and-configured is a static config fact, not
+    evidence the tool resolves right now.
+    """
+
+    snap = status() if snapshot is None else snapshot
+    if snap.source == SOURCE_NONE:
+        return None
+    skill_count = sum(1 for entry in snap.skills if _usable(entry))
+    # The flag, not the tuple's truthiness: a successful zero-tool resolution
+    # must filter (claiming nothing usable is then the truth), and only a
+    # missing live answer falls back to the static enabled/configured flags.
+    live = set(snap.tools) if snap.tools_resolved else None
+    categories: list[str] = []
+    for entry in snap.toolsets:
+        name = _section_name(entry.get("name") or entry.get("label"))
+        if name is None or name in categories:
+            continue
+        tools = entry.get("tools")
+        if live is not None:
+            # A live read is present: the resolved tool set is the source of
+            # truth (Rule 2). A category counts as usable iff one of its declared
+            # tools actually resolved — a stale/narrow toolset ``enabled: false``
+            # does not get to hide a tool the host just handed back as callable.
+            # (computer_use resolves live on this host yet its toolset flag is
+            # false; trusting the flag dropped the one tool the model needed.)
+            if not (
+                isinstance(tools, list)
+                and any(isinstance(tool, str) and tool in live for tool in tools)
+            ):
+                continue
+        elif not _usable(entry):
+            # No live answer (REST tier): the static enabled/configured flags
+            # are the only evidence there is.
+            continue
+        categories.append(name)
+    # Order high-agency-first, THEN truncate to the per-turn budget. Raw catalog
+    # order buried computer_use at 27 of 27, so the cap dropped the one tool that
+    # makes "check my screen" answerable — the model never saw it and refused
+    # work it could have delegated.
+    categories.sort(
+        key=lambda n: (
+            _PRIORITY_CATEGORIES.index(n)
+            if n in _PRIORITY_CATEGORIES
+            else len(_PRIORITY_CATEGORIES),
+            n,
+        )
+    )
+    categories = categories[:MAX_SECTION_CATEGORIES]
+    if not skill_count and not categories:
+        return None
+    inventory = f"This Hermes install reports {skill_count} "
+    inventory += "skill" if skill_count == 1 else "skills"
+    inventory += " installed"
+    if categories:
+        inventory += (
+            ", and these tool categories usable right now: " + ", ".join(categories)
+        )
+        # The shortlist is a per-turn preview, not the ceiling. Name the total
+        # group count and point at the talk_capabilities tool so neither the
+        # model nor the operator reads these ten as the whole story. Only when
+        # there is genuinely more behind it — a small install that fits entirely
+        # must not claim a phantom "full list".
+        total_groups = len(snap.toolsets)
+        if total_groups > len(categories):
+            inventory += (
+                f" — a shortlist of Hermes's {total_groups} tool groups; ask "
+                '"what can you do" for the full catalog'
+            )
+    inventory += "."
+    # Name the high-agency tools that ACTUALLY resolved this session, only when
+    # the live set confirms them — the fix for a voice model treating its own
+    # missing tools as Hermes-wide limits. Without the live answer (REST tier)
+    # there is nothing honest to name, so the directive stays generic.
+    headliners = (
+        [phrase for tool, phrase in _DELEGATE_HEADLINERS if tool in live]
+        if live is not None
+        else []
+    )
+    delegate = (
+        " You can delegate anything Hermes can do: hand it to the delegate_task "
+        "tool and the agent runs the full Hermes toolset."
+    )
+    if headliners:
+        delegate += (
+            " That includes actions you can't take yourself — "
+            + _natural_join(headliners)
+            + "."
+        )
+    delegate += (
+        " Never tell the operator you can't do something Hermes can do; delegate "
+        "it. If the host needs approval for an action, you will be asked out loud "
+        "before it fires. Never invent tool names: the only tools you can call "
+        "directly are this session's advertised tools, and capability questions go "
+        "to the talk_capabilities tool."
+    )
+    return inventory + delegate
+
+
+def reset_for_tests() -> None:
+    """Clear the cached snapshot between tests (never called in production).
+
+    Bumps :data:`_STORE_SEQ` so a read still in flight from before the reset
+    can no longer store into the cleaned cache.
+    """
+
+    global _SNAPSHOT, _SNAPSHOT_AT, _STORE_SEQ, _REFRESHING
+    with _LOCK:
+        _SNAPSHOT = None
+        _SNAPSHOT_AT = 0.0
+        _STORE_SEQ += 1
+        _REFRESHING = False
+    _FILLED.clear()
+
+
+__all__ = [
+    "CAPABILITY_FEATURES",
+    "CAPABILITY_FIELDS",
+    "CHECKING_DETAIL",
+    "HEALTH_COUNTERS",
+    "INERT_DETAIL",
+    "MAX_SECTION_CATEGORIES",
+    "SOURCE_API_SERVER",
+    "SOURCE_IN_PROCESS",
+    "SOURCE_NONE",
+    "UNREACHABLE_DETAIL",
+    "CatalogSnapshot",
+    "instruction_section",
+    "reset_for_tests",
+    "status",
+    "wait_until_warm",
+    "warm",
+    "warm_in_background",
+]

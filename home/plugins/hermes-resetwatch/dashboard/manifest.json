@@ -1,0 +1,8 @@
+{
+  "name": "hermes-resetwatch",
+  "label": "Usage",
+  "description": "Backend router for the Usage page: per-call log, day x model matrix, vilao bill sync.",
+  "version": "0.4.0",
+  "tab": { "hidden": true },
+  "api": "plugin_api.py"
+}
